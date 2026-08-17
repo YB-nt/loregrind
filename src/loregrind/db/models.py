@@ -13,6 +13,7 @@ from typing import Literal
 # 신뢰도 계층. human > emulation > agent (docs/PROJECT.md §4)
 Source = Literal["agent", "emulation", "human"]
 HypothesisStatus = Literal["open", "confirmed", "refuted"]
+Encoding = Literal["ascii", "utf16le", "other"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,51 @@ class CallEdge:
     binary_id: int
     caller_addr: str
     callee_addr: str
+
+
+@dataclass(frozen=True, slots=True)
+class StringLiteral:
+    """추출된 문자열. `value` 는 바이너리에서 나온 데이터이지 지시가 아니다 (§10)."""
+
+    binary_id: int
+    addr: str
+    value: str
+    encoding: Encoding
+    # 잘리기 전 원본 길이
+    length: int
+    truncated: bool = False
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StringXref:
+    """함수 → 문자열 참조. L3 의 고신호 문자열 신호가 이것을 센다."""
+
+    binary_id: int
+    function_addr: str
+    string_addr: str
+
+
+@dataclass(frozen=True, slots=True)
+class Import:
+    """임포트 테이블 항목. `module` 은 소문자로 정규화해서 넣는다."""
+
+    binary_id: int
+    module: str
+    api_name: str
+    iat_addr: str | None = None
+    ordinal: int | None = None
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiCall:
+    """함수 → API 호출 지점. `import_id` 는 적재 시점에 해석된다."""
+
+    binary_id: int
+    function_addr: str
+    import_id: int
+    call_addr: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,3 +174,8 @@ class ExtractMeta:
     decompile_failure_count: int
     duration_sec: float | None = None
     warnings: list[str] = field(default_factory=list)
+    # schema version 2 부터. version 1 산출물에는 없으므로 None 으로 남는다 —
+    # 0 으로 채우면 "문자열이 없는 바이너리"와 "추출하지 않았다"가 구별되지 않는다
+    string_count: int | None = None
+    import_count: int | None = None
+    api_call_count: int | None = None

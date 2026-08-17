@@ -68,7 +68,8 @@ CREATE TABLE strings (
     addr        TEXT    NOT NULL,          -- "0x403040"
     value       TEXT    NOT NULL,          -- 신뢰 경계 밖. 격리해서만 LLM 에 간다
     encoding    TEXT    NOT NULL,          -- 'ascii' | 'utf16le' | 'other'
-    length      INTEGER NOT NULL,
+    length      INTEGER NOT NULL,          -- 잘리기 전 원본 길이
+    truncated   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (binary_id, addr)
 );
 
@@ -86,7 +87,10 @@ CREATE TABLE imports (
     api_name   TEXT    NOT NULL,          -- 'VirtualAlloc'
     iat_addr   TEXT,                      -- 서수 임포트면 NULL 가능
     ordinal    INTEGER,
-    UNIQUE (binary_id, module, api_name, ordinal)
+    -- ordinal 을 키에 넣지 않는다: SQLite 는 NULL 을 서로 다른 값으로 보므로
+    -- 이름 임포트의 중복을 잡지 못한다. 서수 전용 임포트는 api_name 이
+    -- "Ordinal_5" 형태로 들어오므로 (module, api_name) 만으로 유일하다
+    UNIQUE (binary_id, module, api_name)
 );
 
 CREATE TABLE api_calls (                 -- 함수 → API (호출 지점)
@@ -116,7 +120,15 @@ artifacts/<sha256>/
 
 `extract_schema_version` **1 → 2**. `loader.py`의 정합성 검사를 새 카운트 3개로
 확장한다 — `meta.json`과 실제 레코드 수가 어긋나면 적재를 거부하는 기존 규율을
-새 파일에도 그대로 적용한다.
+새 파일에도 그대로 적용한다. `meta.json`의 새 카운트 3개는 **없음(`null`)과 0을
+구별한다.** 0으로 채우면 "문자열이 없는 바이너리"와 "추출하지 않았다"가 같아진다.
+
+**추출은 한 패스다.** `strings.jsonl`·`imports.jsonl`은 별도 스크립트가 아니라
+`scripts/export_functions.py`가 함수와 같은 `-postScript` 실행에서 함께 쓴다.
+`analyzeHeadless`를 두 번 돌리면 대형 바이너리에서 분석 시간이 두 배가 된다.
+
+**문자열 상한**: 하나가 4096자를 넘으면 자르고 `truncated=1`로 남긴다. 조용히
+자르면 적재 후에 손실 여부를 알 방법이 없다.
 
 **하위 호환**: version 1 산출물은 문자열·임포트 없이 적재되되 `warnings`에 남긴다.
 version 2를 요구하는 도구는 §4.3의 `NOT_EXTRACTED` 오류를 반환한다 — 빈 배열을

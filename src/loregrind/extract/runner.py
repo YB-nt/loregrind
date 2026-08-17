@@ -17,6 +17,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from loregrind.extract.loader import CURRENT_EXTRACT_SCHEMA_VERSION
 from loregrind.extract.normalize import file_sha256
 
 # 종료 코드 0 으로도 조용히 실패한다. 로그에서 이 패턴을 찾아야 한다
@@ -120,7 +121,7 @@ def run_extract(
             {
                 "out_dir": str(extract_dir.resolve()),
                 "sha256": sha256,
-                "extract_schema_version": 1,
+                "extract_schema_version": CURRENT_EXTRACT_SCHEMA_VERSION,
             },
             indent=2,
         ),

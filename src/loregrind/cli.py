@@ -54,12 +54,18 @@ def _cmd_load(args: argparse.Namespace) -> int:
     finally:
         repo.close()
 
-    print(f"적재 완료: binary_id={result.binary_id}")
+    print(f"적재 완료: binary_id={result.binary_id} (extract v{result.extract_schema_version})")
     print(f"  함수 {result.functions}개, 콜 간선 {result.call_edges}개")
     print(f"  디컴파일 실패 {result.decompile_failures}개 (레코드는 남아 있다)")
+    print(
+        f"  문자열 {result.strings}개 (참조 {result.string_xrefs}), "
+        f"임포트 {result.imports}개, API 호출 {result.api_calls}개"
+    )
     if result.without_code_hash:
         # 정규화가 코드를 통째로 지워버린 경우다. 규칙이 과한지 확인해야 한다
         print(f"  주의: 디컴파일은 됐으나 code_hash 를 못 만든 함수 {result.without_code_hash}개")
+    for warning in result.warnings:
+        print(f"  주의: {warning}")
     return 0
 
 

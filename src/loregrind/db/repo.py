@@ -22,12 +22,16 @@ from pathlib import Path
 from typing import Any
 
 from loregrind.db.models import (
+    ApiCall,
     Binary,
     CallEdge,
     Function,
     FunctionAnalysis,
     Hypothesis,
+    Import,
     Run,
+    StringLiteral,
+    StringXref,
 )
 
 # 개발자용 조회에서 허용하는 접두사. 쓰기 문장을 CLI 로 흘려보내지 않는다
@@ -224,6 +228,133 @@ class Repo:
             (binary_id, addr),
         ).fetchall()
         return [str(r["caller_addr"]) for r in rows]
+
+    # -- 문자열·임포트 (추출 사실, 마이그레이션 0002) -------------------------
+
+    def insert_strings(self, items: Iterable[StringLiteral]) -> int:
+        rows = [
+            (s.binary_id, s.addr, s.value, s.encoding, s.length, int(s.truncated)) for s in items
+        ]
+        with self.tx() as cur:
+            cur.executemany(
+                "INSERT INTO strings (binary_id, addr, value, encoding, length, truncated) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def insert_string_xrefs(self, xrefs: Iterable[StringXref]) -> int:
+        rows = [(x.binary_id, x.function_addr, x.string_addr) for x in xrefs]
+        with self.tx() as cur:
+            # 추출 사실의 중복은 무해하다. 같은 함수가 같은 문자열을 두 번 참조할 수 있다
+            cur.executemany(
+                "INSERT OR IGNORE INTO string_xrefs (binary_id, function_addr, string_addr) "
+                "VALUES (?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def insert_imports(self, items: Iterable[Import]) -> dict[tuple[str, str], int]:
+        """임포트를 적재하고 `(module, api_name) → import_id` 지도를 돌려준다.
+
+        `api_calls` 가 `import_id` 를 필요로 하므로 적재 순서가 강제된다 —
+        imports 먼저, 그 다음 api_calls. 지도를 반환하지 않으면 호출부가 다시
+        SELECT 해야 하고, 그 SELECT 가 repo 밖으로 새어 나간다.
+        """
+        index: dict[tuple[str, str], int] = {}
+        with self.tx() as cur:
+            for imp in items:
+                cur.execute(
+                    "INSERT INTO imports (binary_id, module, api_name, iat_addr, ordinal) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (imp.binary_id, imp.module, imp.api_name, imp.iat_addr, imp.ordinal),
+                )
+                index[(imp.module, imp.api_name)] = int(cur.lastrowid or 0)
+        return index
+
+    def insert_api_calls(self, calls: Iterable[ApiCall]) -> int:
+        rows = [(c.binary_id, c.function_addr, c.import_id, c.call_addr) for c in calls]
+        with self.tx() as cur:
+            cur.executemany(
+                "INSERT OR IGNORE INTO api_calls "
+                "(binary_id, function_addr, import_id, call_addr) VALUES (?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def get_apis_used(self, binary_id: int, function_addr: str) -> list[dict[str, Any]]:
+        """이 함수가 부르는 API 목록. L2 `get_apis_used` 의 뒷단.
+
+        정렬을 고정한다 — 목록 순서가 흔들리면 같은 run 을 두 번 돌린 결과가 달라지고
+        어블레이션 비교가 무의미해진다 (docs/SPEC.md §4.1).
+        """
+        rows = self._conn.execute(
+            """
+            SELECT i.module, i.api_name, COUNT(*) AS call_count
+            FROM api_calls a JOIN imports i ON i.id = a.import_id
+            WHERE a.binary_id = ? AND a.function_addr = ?
+            GROUP BY i.module, i.api_name
+            ORDER BY call_count DESC, i.module, i.api_name
+            """,
+            (binary_id, function_addr),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_strings(
+        self,
+        binary_id: int,
+        substring: str,
+        *,
+        limit: int = 50,
+        min_length: int = 4,
+    ) -> list[dict[str, Any]]:
+        """부분 문자열 검색. **정규식은 받지 않는다** (docs/SPEC.md §4.2).
+
+        ReDoS 표면이기도 하지만, 더 큰 이유는 질의 표현력이 가변이면 §6 탐색 효율을
+        run 사이에서 비교할 수 없다는 것이다.
+        """
+        # LIKE 의 와일드카드를 사용자 입력으로 받지 않는다 — 부분 일치 고정이다.
+        # 이스케이프 순서가 중요하다: 역슬래시를 먼저 하지 않으면 두 번 이스케이프된다
+        escaped = substring.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        rows = self._conn.execute(
+            """
+            SELECT s.addr, s.value, s.encoding, s.length, s.truncated
+            FROM strings s
+            WHERE s.binary_id = ? AND s.length >= ? AND s.value LIKE ? ESCAPE '\\'
+            ORDER BY s.addr
+            LIMIT ?
+            """,
+            (binary_id, min_length, pattern, limit),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["truncated"] = bool(item["truncated"])
+            item["referenced_by"] = self.get_string_referrers(binary_id, str(row["addr"]))
+            out.append(item)
+        return out
+
+    def get_string_referrers(self, binary_id: int, string_addr: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT function_addr FROM string_xrefs WHERE binary_id = ? AND string_addr = ? "
+            "ORDER BY function_addr",
+            (binary_id, string_addr),
+        ).fetchall()
+        return [str(r["function_addr"]) for r in rows]
+
+    def get_strings_for_function(self, binary_id: int, function_addr: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT s.addr, s.value, s.encoding, s.length, s.truncated
+            FROM string_xrefs x JOIN strings s
+              ON s.binary_id = x.binary_id AND s.addr = x.string_addr
+            WHERE x.binary_id = ? AND x.function_addr = ?
+            ORDER BY s.addr
+            """,
+            (binary_id, function_addr),
+        ).fetchall()
+        return [dict(r) | {"truncated": bool(r["truncated"])} for r in rows]
 
     # -- run (불변식 5) -------------------------------------------------------
 
