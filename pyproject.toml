@@ -3,7 +3,13 @@ name = "loregrind"
 version = "0.0.0"
 description = "Agentic reverse engineering knowledge base for stripped binaries"
 requires-python = ">=3.12"
-dependencies = []
+# 런타임 의존성은 계층에 착수할 때만 늘린다. 쓰지 않는 패키지를 락파일에 넣으면
+# 첫 uv sync 만 느려지고 공급망 표면은 계속 남는다.
+#   mcp — L2 도구 서버(§7 2주차). tools/server.py 만 임포트하며 tools/api.py 는
+#         SDK 없이 동작한다 (SDK 버전 변경이 도구 계약을 흔들지 않게)
+dependencies = [
+    "mcp>=2.0.0",
+]
 
 [project.scripts]
 loregrind = "loregrind.cli:main"

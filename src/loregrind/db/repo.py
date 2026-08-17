@@ -213,6 +213,29 @@ class Repo:
         ).fetchone()
         return int(row["n"])
 
+    def list_functions(
+        self, binary_id: int, *, after_addr: str | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """주소 순 함수 목록. L2 `list_candidates(strategy='sequential')` 의 뒷단.
+
+        커서는 **주소 문자열 비교**다. `"0x401000" < "0x99"` 처럼 자릿수가 다르면
+        사전순이 수치순과 어긋나지만, 한 바이너리 안의 주소는 자릿수가 같으므로
+        실무상 일치한다. 정수 변환은 하지 않는다 — 추출 사실을 원형으로 보존한다.
+        """
+        if after_addr is None:
+            rows = self._conn.execute(
+                "SELECT addr, original_name, is_library FROM functions "
+                "WHERE binary_id = ? ORDER BY addr LIMIT ?",
+                (binary_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT addr, original_name, is_library FROM functions "
+                "WHERE binary_id = ? AND addr > ? ORDER BY addr LIMIT ?",
+                (binary_id, after_addr, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_callees(self, binary_id: int, addr: str) -> list[str]:
         rows = self._conn.execute(
             "SELECT callee_addr FROM call_edges WHERE binary_id = ? AND caller_addr = ? "

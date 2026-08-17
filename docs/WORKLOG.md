@@ -181,7 +181,7 @@ artifacts/, .ghidra-projects/   런타임 생성. gitignore 대상
 | `requires-python` | `>=3.12` | §9 스택. 시스템 python은 3.10이라 uv가 3.12를 별도로 받아 쓴다 |
 | `[project.scripts]` | `loregrind = "loregrind.cli:main"` | §8 산출물 1번의 `extract\|analyze\|query\|eval` CLI 진입점. `cli.py`는 아직 없다 |
 | `[tool.hatch...wheel]` | `packages = ["src/loregrind"]` | src 레이아웃에서 설치 대상 지정 |
-| `[dependency-groups] dev` | ruff, mypy, pytest | 런타임 의존성은 **비워 뒀다**. 쓰지 않는 패키지를 락파일에 넣으면 첫 `uv sync`만 느려진다. 계층 착수 시 `uv add` |
+| `[dependency-groups] dev` | ruff, mypy, pytest | 런타임 의존성은 계층 착수 시에만 `uv add`. 쓰지 않는 패키지를 락파일에 넣으면 첫 `uv sync`만 느려진다. **2026-08-18 현재 런타임 의존성은 `mcp>=2.0.0` 하나** (L2 착수로 추가) |
 | `ruff.extend-exclude` | `["scripts"]` | `scripts/`는 Ghidra 인터프리터에서 돈다. 이 프로젝트의 파이썬 규칙을 적용하면 거짓 경고만 나온다 |
 | `ruff.lint.select` | `E,F,I,UP,B,SIM,RUF,S` | **`S`(bandit)가 의도적 선택**이다. §10 위반 중 정적으로 잡히는 것을 린트가 잡게 한다 |
 | `S608` | 전역으로 끄지 않음 | SQL 문자열 조립은 `repo.py`에서 파라미터 바인딩과 함께 의도적으로 쓴다. 개별 `noqa`로 풀어야 리뷰에 걸린다 |

@@ -20,7 +20,10 @@
 | L1 추출 | **동작** — functions / call_edges + 정규화 `code_hash` | `extract/`, `scripts/export_functions.py` (Ghidra 실행은 미검증) |
 | DB | **동작** — 8테이블 + `run_metrics`, 트리거 5개로 append-only 강제 | `db/schema.sql`, `migrations/0001` |
 | 평가 하네스 | **동작(뼈대)** — 지표 6종 계산·누출 검사·리포트·컷라인 | `eval/`, `make verify-holdout` |
-| L2 도구 | **없음** | `tools/__init__.py` 한 줄 |
+| L1 사실 확장 | **동작** — strings / imports / api_calls (마이그레이션 `0002`) | Ghidra 측은 미검증 |
+| L2 도구 | **동작** — 읽기 7종, MCP stdio 서버, 예산 게이트 | `tools/`, `analyze/budget.py` |
+| 인젝션 격리 | **동작** — `wrap_untrusted`, 코퍼스 테스트 | `analyze/context.py` |
+| 읽기 전용 에이전트 | **없음** — LLM을 호출하는 코드가 아직 없다 | §14 미결정 1번 |
 | L3 랭킹 | **없음** | `rank/__init__.py` 한 줄 |
 | L4 루프·에뮬레이션 | **없음** | `analyze/`, `emulate/` |
 | 검색 채널 | **없음** | `retrieval/` |
@@ -142,6 +145,11 @@ version 2를 요구하는 도구는 §4.3의 `NOT_EXTRACTED` 오류를 반환한
 
 **서버**: MCP Python SDK stdio 서버. 진입점 `loregrind.tools.server:main`,
 CLI는 `loregrind serve --db <path> --binary <sha256>`.
+
+SDK는 `mcp==2.0.0`. `mcp.server.MCPServer` + `@server.tool()` 데코레이터 + 
+`server.run(transport="stdio")`. 도구 함수가 `dict`를 반환하면 SDK가 구조화 출력으로
+직렬화하므로 §4.1의 응답 형식이 그대로 전달된다. **`server.py`에는 로직을 두지
+않는다** — 도구 구현은 `tools/api.py`에 있고 SDK 없이 테스트된다.
 
 **바이너리는 서버 시작 시 고정한다.** 도구 인자에 `binary_id`를 넣지 않는다.
 이유 두 가지 — (a) 에이전트가 다른 샘플을 헤집는 경로를 원천 차단, (b) run 하나가
@@ -428,7 +436,8 @@ class Channel(Protocol):
 | 주차 | 판정 명령 | 기대 |
 |---|---|---|
 | 1 ✅ | `loregrind query "SELECT … JOIN call_edges …"` | 행 반환 (달성) |
-| 2 | `loregrind serve` + 읽기 전용 에이전트로 함수 1개 | `record_analysis` 없이도 근거 인용된 요약 1건, 인젝션 코퍼스 테스트 통과, `runs`에 토큰·비용 기록 |
+| 2a ✅ | `loregrind serve` 가 뜨고 도구 7종이 등록된다 | 도구 응답 계약 테스트 통과, 인젝션 코퍼스 테스트 통과, `runs` 행 생성 (달성) |
+| 2b | 읽기 전용 에이전트가 함수 1개를 요약 | 근거 인용된 요약 1건, `runs`에 **토큰·비용 실측값** 기록. **미달성 — LLM 호출 코드 없음** |
 | 3 | `make ablation METRIC=naming_accuracy AXIS=rename_writes` | 두 조건(on/off)의 행이 각각 `n>0`으로 나옴 |
 | 4 | 대형 바이너리 1개 완주 | 예산 게이트 안에서 종료, 부분 결과 커밋 확인 |
 | 5 | `make report` | **코어 지표 표 6종 + 홀드아웃 병기.** 미달 시 6주차 이후를 잘라낸다 |
@@ -461,6 +470,8 @@ class Channel(Protocol):
 - **에이전트 실행 주체** — 2주차 읽기 전용 에이전트를 Anthropic API 직접 호출로
   돌릴지, Claude Code를 MCP 클라이언트로 쓸지. 전자는 계측(토큰·비용)이 정확하고
   후자는 개발이 빠르다. **§6 비용 지표가 필수이므로 전자로 기운다.**
+- ~~**MCP SDK의 도구 등록 형식**~~ — 해소됨. `mcp==2.0.0`을 의존성에 추가하고
+  `MCPServer` + `@server.tool()`로 7개 도구를 등록해 실제로 뜨는 것을 확인했다 (§4.1).
 - **`capa` 의존 여부** — L3 신호 중 하나일 뿐이므로 선택 의존성으로 두되, 없을 때
   점수 함수가 어떻게 되는지 확정 필요.
 - **정답셋 생성 파이프라인** — `EVAL-SPEC.md`가 스키마는 정의했으나 컴파일 격자를

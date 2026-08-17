@@ -130,10 +130,33 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """L2 MCP 도구 서버 (§7 2주차).
+
+    바이너리는 여기서 고정된다 — 도구 인자로 받지 않는다. 에이전트가 다른 샘플을
+    헤집는 경로를 막고, run 하나가 바이너리 하나에 대응하게 하려는 것이다.
+    """
+    from loregrind.tools.server import BinaryNotLoaded, build_context, build_server
+
+    try:
+        ctx = build_context(args.db, args.binary, allow_writes=args.allow_writes, model=args.model)
+    except BinaryNotLoaded as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(
+        f"MCP 서버 시작 (stdio) — binary_id={ctx.binary_id}, run_id={ctx.run_id}, "
+        f"쓰기={'허용' if ctx.allow_writes else '금지'}",
+        file=sys.stderr,
+    )
+    build_server(ctx).run(transport="stdio")
+    return 0
+
+
 def _cmd_not_implemented(args: argparse.Namespace) -> int:
     print(
         f"{args.command} 는 아직 구현되지 않았다 (§7 {args.milestone}). "
-        "지금 가능한 것: extract / load / query",
+        "지금 가능한 것: extract / load / query / serve / eval",
         file=sys.stderr,
     )
     return 2
@@ -173,8 +196,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_query.add_argument("--json", action="store_true")
     p_query.set_defaults(func=_cmd_query)
 
+    p_serve = sub.add_parser("serve", help="L2 MCP 도구 서버 (stdio)")
+    p_serve.add_argument("--binary", required=True, help="대상 바이너리의 sha256")
+    p_serve.add_argument("--model", default="unset", help="runs.model 에 기록된다")
+    p_serve.add_argument(
+        "--allow-writes",
+        action="store_true",
+        help="쓰기 도구 활성화 (§7 3주차 전까지 쓰기 도구 자체가 없다)",
+    )
+    p_serve.set_defaults(func=_cmd_serve)
+
     p_analyze = sub.add_parser("analyze", help="(미구현) 분석 루프")
-    p_analyze.set_defaults(func=_cmd_not_implemented, milestone="2~4주차")
+    p_analyze.set_defaults(func=_cmd_not_implemented, milestone="3~4주차")
 
     p_eval = sub.add_parser("eval", help="어블레이션·지표 조회 (전체는 python -m eval.run)")
     p_eval.add_argument(
