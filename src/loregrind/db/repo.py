@@ -43,8 +43,44 @@ def load_schema_sql() -> str:
     return resources.files("loregrind.db").joinpath("schema.sql").read_text(encoding="utf-8")
 
 
+def migration_files() -> list[tuple[str, str]]:
+    """`migrations/` 의 `NNNN__*.sql` 을 이름 순으로 돌려준다.
+
+    이름 순 = 적용 순이다. `NNNN` 을 4자리 zero-pad 로 강제하는 이유가 이것이다.
+    """
+    root = resources.files("loregrind.db").joinpath("migrations")
+    out: list[tuple[str, str]] = []
+    for entry in sorted(p.name for p in root.iterdir() if p.name.endswith(".sql")):
+        out.append((entry, root.joinpath(entry).read_text(encoding="utf-8")))
+    return out
+
+
+def apply_migrations(conn: sqlite3.Connection) -> list[str]:
+    """아직 적용되지 않은 마이그레이션을 순서대로 적용한다.
+
+    `schema_migrations` 는 `schema.sql` 이 아니라 여기서 만든다 — 커밋된 기반 스키마를
+    나중에 고치지 않기 위함이다(`/db-change` 절대 규칙 1의 정신).
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "  filename TEXT PRIMARY KEY,"
+        "  applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    )
+    applied = {str(r["filename"]) for r in conn.execute("SELECT filename FROM schema_migrations")}
+    newly: list[str] = []
+    for filename, sql in migration_files():
+        if filename in applied:
+            continue
+        conn.executescript(sql)
+        conn.execute("INSERT INTO schema_migrations (filename) VALUES (?)", (filename,))
+        conn.commit()
+        newly.append(filename)
+    return newly
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
-    """DB 연결을 만들고 스키마를 보장한다.
+    """DB 연결을 만들고 스키마와 마이그레이션을 보장한다.
 
     `foreign_keys` 는 연결 단위 설정이라 여기서 매번 켠다 — schema.sql 안의
     PRAGMA 는 그 연결에만 적용되고 다음 연결로 이어지지 않는다.
@@ -53,6 +89,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(load_schema_sql())
+    apply_migrations(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -313,6 +350,76 @@ class Repo:
                 ),
             )
             return int(cur.lastrowid or 0)
+
+    # -- 평가 지표 (§6) -------------------------------------------------------
+
+    def insert_metric(
+        self,
+        run_id: str,
+        metric: str,
+        value: float,
+        n: int,
+        *,
+        stratum: str = "all",
+        corpus_state: str = "cold",
+        groundtruth_version: str | None = None,
+        method: str | None = None,
+        k: int | None = None,
+    ) -> int:
+        """지표 하나를 기록한다.
+
+        `n` 이 필수 인자인 것이 핵심이다 — 함수 12개에서 잰 92% 는 92% 가 아니다.
+        기본값을 주면 호출자가 생략하고, 생략된 n 은 리포트에서 복원할 수 없다.
+        """
+        with self.tx() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_metrics (
+                    run_id, metric, value, n, stratum, corpus_state,
+                    groundtruth_version, method, k
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, metric, value, n, stratum, corpus_state, groundtruth_version, method, k),
+            )
+            return int(cur.lastrowid or 0)
+
+    def ablation(self, metric: str, config_key: str) -> list[dict[str, Any]]:
+        """어블레이션 — SQL 한 줄이어야 한다는 요구를 코드로 고정한다.
+
+        애플리케이션에서 우회 집계하지 않는다. 이 질의가 안 되면 계측이 결함이므로
+        집계를 우회하지 말고 결함으로 보고한다.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT r.config_json ->> ('$.' || ?) AS condition,
+                   m.stratum,
+                   m.corpus_state,
+                   AVG(m.value) AS mean_value,
+                   SUM(m.n)     AS total_n,
+                   COUNT(*)     AS runs
+            FROM run_metrics m JOIN runs r USING (run_id)
+            WHERE m.metric = ?
+            GROUP BY condition, m.stratum, m.corpus_state
+            ORDER BY m.stratum, m.corpus_state, condition
+            """,
+            (config_key, metric),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def metrics_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT metric, value, n, stratum, corpus_state, method, k, computed_at "
+            "FROM run_metrics WHERE run_id = ? ORDER BY metric, stratum",
+            (run_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def table_names(self) -> set[str]:
+        """이 DB 에 있는 테이블 이름. 정답 누출 점검이 사용한다."""
+        rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
+        return {str(r["name"]) for r in rows}
 
     # -- 개발자용 조회 --------------------------------------------------------
 

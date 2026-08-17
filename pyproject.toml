@@ -39,12 +39,19 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S"]
 # S608(SQL 문자열 조립)은 db/repo.py 에서 의도적으로 파라미터 바인딩과 함께 쓴다.
 # 개별 라인에서 noqa 로 풀고, 전역으로 끄지는 않는다.
 
+[tool.ruff.lint.isort]
+# eval/ 은 설치되는 패키지가 아니라 저장소 루트의 하네스라서 ruff 가 서드파티로 본다.
+# 명시하지 않으면 `from eval import ...` 가 pytest 옆에 끼어 임포트 그룹이 흔들린다.
+known-first-party = ["loregrind", "eval"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]  # pytest 는 assert 를 쓴다
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src"]
+# eval/ 도 검사 대상이다. 지표 계산이 틀리면 평가 숫자 전체가 무의미해지는데
+# 틀렸다는 신호가 눈에 보이지 않는다 — 타입이 그 신호 중 하나다.
+files = ["src", "eval"]
 strict = true
 warn_unreachable = true
 # scripts/ 는 Ghidra 인터프리터 전용이라 타입 검사 대상이 아니다.
@@ -52,6 +59,9 @@ exclude = "^scripts/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# eval/ 은 설치되는 패키지가 아니라 저장소 루트의 하네스다 (레이아웃 정본).
+# 테스트가 `import eval.metrics` 로 접근할 수 있게 루트를 경로에 넣는다.
+pythonpath = ["."]
 markers = [
     # Ghidra 없이는 돌 수 없는 테스트. 기본 실행에서 제외하되 스킵 사실은 숨기지 않는다.
     "ghidra: requires a local Ghidra installation ($GHIDRA_HOME)",

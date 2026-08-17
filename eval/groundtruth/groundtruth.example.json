@@ -1,0 +1,75 @@
+{
+  "version": "gt-example-0",
+  "notes": [
+    "스키마 참조용 예시다. 실제 측정에 쓰지 않는다.",
+    "sha256 은 자리표시자이며 어떤 실제 빌드와도 대응하지 않는다.",
+    "실제 정답셋은 groundtruth.json 이고 생성 파이프라인은 아직 없다 (docs/EVAL-SPEC.md §9)."
+  ],
+  "binaries": [
+    {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "source_project": "libdemo",
+      "compiler": "gcc",
+      "opt_level": "-O2",
+      "is_holdout": false,
+      "functions": [
+        {
+          "addr": "0x401000",
+          "true_name": "rc4_init",
+          "aliases": ["rc4_key_schedule", "rc4_ksa"],
+          "is_key_function": true,
+          "wrong_prior": "string_compare"
+        },
+        {
+          "addr": "0x401100",
+          "true_name": "parse_header",
+          "aliases": [],
+          "is_key_function": false
+        }
+      ]
+    },
+    {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "source_project": "libdemo",
+      "compiler": "clang",
+      "opt_level": "-O3",
+      "is_holdout": false,
+      "functions": [
+        {
+          "addr": "0x8000",
+          "true_name": "rc4_init",
+          "aliases": ["rc4_key_schedule"],
+          "is_key_function": true
+        }
+      ]
+    },
+    {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000003",
+      "source_project": "otherfamily",
+      "compiler": "gcc",
+      "opt_level": "-O2",
+      "is_holdout": true,
+      "functions": [
+        {
+          "addr": "0x402000",
+          "true_name": "aes_expand_key",
+          "aliases": ["aes_key_expansion"],
+          "is_key_function": true
+        }
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "source_symbol": "rc4_init",
+      "left": [
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "0x401000"
+      ],
+      "right": [
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "0x8000"
+      ]
+    }
+  ]
+}

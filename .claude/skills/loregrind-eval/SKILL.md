@@ -93,6 +93,23 @@ SQL로 뽑히지 않으면 **애플리케이션 코드로 우회 집계하지 �
 - **숫자를 좋게 만들지 않는다.** §7은 5주차에 지표가 안 나오면 6주차 이후를 잘라내라고 지시한다 — 그 판단이 가능하려면 숫자가 정직해야 한다.
 - 측정하지 못한 것은 "한계 / 미측정"에 남긴다. 정답셋이 없으면 추정하지 말고 "측정 불가"로 보고한다.
 
+## 구현 위치 — 이 규율이 어디에 코드로 박혀 있는가
+
+명세: **`docs/EVAL-SPEC.md`**. 아래 규율을 다시 설계하지 말고 그 문서와 코드를 먼저 읽는다.
+
+| 규율 | 구현 |
+|---|---|
+| `n` 없는 지표 불가 | `eval/metrics.py:MetricValue`, `run_metrics.n NOT NULL` |
+| 측정 불가 ≠ 0% | `MetricValue.unmeasured_reason` (`__post_init__` 이 위반을 거부) |
+| 지표 계산에 LLM 금지 | 의미 동등은 정답셋 `aliases` 로 사전 확정 |
+| 정답 누출 차단 | `eval/leakage.py` + `make verify-holdout` |
+| 어블레이션은 SQL 한 줄 | `Repo.ablation()`, `loregrind eval --ablation-axis` |
+| 홀드아웃 열을 지우지 않음 | `eval/report.py:render_metric_table` |
+| 지표의 방향 | `eval/metrics.py:LOWER_IS_BETTER` — **한 곳에만 둔다** |
+
+게이트: `make verify`(코드 규율) / `make verify-holdout`(누출·홀드아웃·과적합).
+후자는 정답셋이나 홀드아웃 지표가 없으면 **exit 3(미측정)** 으로 실패한다.
+
 ## 5주차 컷라인
 
 §7: **5주차 종료 시점에 코어 지표 표가 안 나오면 6주차 이후를 전부 잘라내고 코어를 다듬는 데 남은 시간을 쓴다.** 얕은 5개보다 깊은 2개가 강하다.
