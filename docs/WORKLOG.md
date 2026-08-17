@@ -17,8 +17,10 @@
 | `repo.py` — DB 접근 단일 통로, run 계측, 비밀정보 마스킹 | 검색 채널(BM25·임베딩·구조 지문), RRF 융합 |
 | 정규화 + `code_hash` (결정론 테스트로 고정) | 평가 하네스, 정답셋, 어블레이션 |
 | JSONL → DB 적재 + 산출물 정합성 검사 | 프롬프트 조립·인젝션 격리 (격리할 프롬프트 자체가 없다) |
-| CLI `extract` / `load` / `query` | `analyze` / `eval` (명시적으로 exit 2 로 거부) |
-| 테스트 27건 (ruff·mypy strict 통과) | — |
+| CLI `extract` / `load` / `query` / `eval`(어블레이션 조회) | `analyze` (명시적으로 exit 2 로 거부) |
+| **평가 하네스** — 지표 6종 계산, 누출 검사, 리포트, 컷라인 판정 | **측정된 지표 값 (하나도 없다).** 정답셋 생성 파이프라인 |
+| `make verify` / `make verify-holdout` 게이트 | — |
+| 테스트 65건 (ruff·mypy strict 통과) | — |
 
 **Ghidra 의존 코드는 한 줄도 실행되지 않았다.** `scripts/export_functions.py` 와
 `runner.py` 의 `analyzeHeadless` 호출은 작성됐지만 Ghidra 미설치로 미검증이다.
@@ -56,6 +58,8 @@
 | `changes/*.md` (4건) | 작업별 "왜·무엇을 기각·무엇이 미검증" | 설계 근거 |
 | `WORKLOG.md` | 이 문서 | 현재 상태 |
 | `LEARNING.md` | 학습 경로 — 선행 지식, 읽는 순서, 일반화 가능한 교훈 8개, 주차별 자기검증 질문 | 학습 |
+| `EVAL-SPEC.md` | 평가 하네스 명세 — 지표 공식, 정답셋 스키마, 누출 검사, 어블레이션 6축, 게이트 exit 코드, **아직 강제되지 않는 것** | 평가 |
+| `ablation.md` | 어블레이션 6축 + 검색 채널 표 (전부 "측정 전") | 평가 |
 
 ### `docs/WORKTREE.md`의 핵심 — 경로 소유권
 

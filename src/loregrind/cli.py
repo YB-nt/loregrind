@@ -89,6 +89,41 @@ def _cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_eval(args: argparse.Namespace) -> int:
+    """어블레이션·지표 조회. 전체 평가 하네스는 `python -m eval.run` 이다.
+
+    여기서 하는 일은 **어블레이션이 SQL 한 줄로 뽑히는지 확인**하는 것뿐이다.
+    안 뽑히면 애플리케이션에서 우회 집계하지 않고 결함으로 보고한다 (§6).
+    """
+    repo = Repo.open(args.db)
+    try:
+        if args.run_id:
+            rows = repo.metrics_for_run(args.run_id)
+            if not rows:
+                print(f"run {args.run_id} 에 기록된 지표가 없다 (0% 가 아니라 미측정)")
+                return 3
+            for row in rows:
+                print(" | ".join(f"{k}={v}" for k, v in row.items()))
+            return 0
+
+        rows = repo.ablation(args.metric, args.ablation_axis)
+    finally:
+        repo.close()
+
+    if not rows:
+        print(
+            f"어블레이션 결과가 비어 있다: metric={args.metric}, axis={args.ablation_axis}\n"
+            "  run_metrics 에 지표가 없거나 runs.config_json 에 그 축이 없다.\n"
+            "  → 우회 집계하지 말고 계측 결함으로 다룬다 (§6)",
+            file=sys.stderr,
+        )
+        return 3
+    print(f"# 어블레이션 — {args.metric} by {args.ablation_axis}")
+    for row in rows:
+        print(" | ".join(f"{k}={v}" for k, v in row.items()))
+    return 0
+
+
 def _cmd_not_implemented(args: argparse.Namespace) -> int:
     print(
         f"{args.command} 는 아직 구현되지 않았다 (§7 {args.milestone}). "
@@ -135,8 +170,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_analyze = sub.add_parser("analyze", help="(미구현) 분석 루프")
     p_analyze.set_defaults(func=_cmd_not_implemented, milestone="2~4주차")
 
-    p_eval = sub.add_parser("eval", help="(미구현) 평가 실행")
-    p_eval.set_defaults(func=_cmd_not_implemented, milestone="2주차부터")
+    p_eval = sub.add_parser("eval", help="어블레이션·지표 조회 (전체는 python -m eval.run)")
+    p_eval.add_argument(
+        "--ablation-axis",
+        default="rename_writes",
+        help="runs.config_json 의 키. 이 축으로 GROUP BY 한다",
+    )
+    p_eval.add_argument("--metric", default="naming_accuracy")
+    p_eval.add_argument("--run-id", default=None, help="지정하면 그 run 의 지표를 나열한다")
+    p_eval.set_defaults(func=_cmd_eval)
 
     return parser
 

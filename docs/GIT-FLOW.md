@@ -91,7 +91,8 @@ Audit: PASS 8 / FAIL 0 / UNKNOWN 1 (Ghidra 부재로 실행 미검증)
 
 ## 커밋 전 확인
 
-- `uv run ruff check .` / `uv run mypy src/` / `uv run pytest` 통과
+- **`make verify` 통과** — lint / mypy strict / pytest / 스키마 적재 / 마이그레이션 append-only 를 한 번에 본다. 개별 명령(`uv run ruff check .` 등)을 따로 외우지 않는다
+- 평가 숫자를 건드린 작업이면 **`make verify-holdout`** 도 본다. 정답셋이 없으면 exit 3(미측정)으로 실패하는 것이 정상이다
 - **평문 PE·샘플 바이너리가 스테이징에 없는지**(§10). `.gitignore`가 1차 방어지만 `git status`로 눈으로 확인한다
 - API 키·`.env`가 포함되지 않았는지
 - 해당 작업의 변경 기록이 `docs/changes/`에 있는지
