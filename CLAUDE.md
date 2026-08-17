@@ -40,3 +40,5 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 2026-08-17 | Best-README-Template 하네스(template-editor/qa, template-editing/sync-check/maintainer) 제거 | 전체 | 저장소의 실제 프로젝트가 Loregrind로 전환되어 도메인 불일치 |
 | 2026-08-17 | Loregrind 하네스 초기 구성 — 에이전트 4(architect/implementer/invariant-auditor/evaluator) + 스킬 5(architecture/implementation/invariant-audit/eval/build) | 전체 | `docs/PROJECT.md` 기반 개발 하네스 구축 요청 |
 | 2026-08-17 | 오케스트레이터에 Phase 7(변경 기록) / Phase 8(Git-Flow 커밋) 추가, `docs/GIT-FLOW.md` · `docs/changes/` · `.gitignore` 신설 | skills/loregrind-build, docs/, .gitignore | 작업별 변경 내용을 docs/에 정리하고 Git-Flow를 적용하라는 요청 |
+| 2026-08-17 | 작업 스킬 3종(db-change / ghidra-extract / add-retrieval-channel) 프론트매터 수정 — YAML 오류와 미지원 키(`paths`·`arguments`) 제거로 로드 실패 해소 | skills/{db-change,ghidra-extract,add-retrieval-channel} | 세 스킬이 파일은 있으나 스킬 목록에 등록되지 않아 실제로 적용되지 않던 문제 |
+| 2026-08-17 | 프로젝트 레이아웃 스캐폴딩(`pyproject.toml` + `src/loregrind/` 10패키지 + 계층별 `tests/`), `docs/WORKTREE.md` 신설, 스킬 경로 불일치 4건 정정 | 전체 | 스킬이 참조하는 경로가 존재하지 않아 적용 대상이 없었고, 워크트리 병렬 작업의 경로 소유권이 미정의 |

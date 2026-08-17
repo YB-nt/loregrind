@@ -1,0 +1,55 @@
+[project]
+name = "loregrind"
+version = "0.0.0"
+description = "Agentic reverse engineering knowledge base for stripped binaries"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+loregrind = "loregrind.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loregrind"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "pytest>=8.3",
+]
+
+[tool.ruff]
+src = ["src", "tests", "eval"]
+line-length = 100
+target-version = "py312"
+# scripts/ 는 Ghidra의 Jython/PyGhidra 인터프리터에서 돈다.
+# 이 프로젝트의 파이썬 버전·의존성 규칙을 적용하면 거짓 경고만 나온다.
+extend-exclude = ["scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S"]
+# S608(SQL 문자열 조립)은 db/repo.py 에서 의도적으로 파라미터 바인딩과 함께 쓴다.
+# 개별 라인에서 noqa 로 풀고, 전역으로 끄지는 않는다.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # pytest 는 assert 를 쓴다
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+# scripts/ 는 Ghidra 인터프리터 전용이라 타입 검사 대상이 아니다.
+exclude = "^scripts/"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    # Ghidra 없이는 돌 수 없는 테스트. 기본 실행에서 제외하되 스킵 사실은 숨기지 않는다.
+    "ghidra: requires a local Ghidra installation ($GHIDRA_HOME)",
+]
+addopts = "-m 'not ghidra' -ra"
