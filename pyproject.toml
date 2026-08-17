@@ -28,7 +28,11 @@ line-length = 100
 target-version = "py312"
 # scripts/ 는 Ghidra의 Jython/PyGhidra 인터프리터에서 돈다.
 # 이 프로젝트의 파이썬 버전·의존성 규칙을 적용하면 거짓 경고만 나온다.
-extend-exclude = ["scripts"]
+#
+# *.md 를 제외하는 이유: ruff 는 마크다운 안의 Python 코드 블록도 포맷한다.
+# docs/ 와 .claude/skills/ 의 예시 코드는 "이렇게 쓰라"는 설명이지 실행 코드가 아니고,
+# 줄바꿈 위치 자체가 설명의 일부다. 포매터가 이것을 조용히 고쳐 쓰면 문서가 흔들린다.
+extend-exclude = ["scripts", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S"]

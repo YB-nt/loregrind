@@ -9,18 +9,20 @@
 - **기준 커밋**: `2d0c22e` (`develop`, `origin/develop`에 푸시됨)
 - **최종 갱신**: 2026-08-17
 
-## 먼저 분명히 할 것 — 구현 코드는 아직 0행이다
+## 먼저 분명히 할 것 — 1주차(L1)까지 동작하고, 그 앞은 없다
 
-지금까지의 작업은 **사양 · 하네스 · 프로젝트 골격**이다. 동작하는 Loregrind 기능은 없다.
-
-| 있는 것 | 없는 것 |
+| 있는 것 (동작 확인됨) | 없는 것 |
 |---|---|
-| 사양 문서(§1~§11), 개발 하네스(에이전트 4 + 스킬 8) | `schema.sql`, `repo.py`, `cli.py` — 1주차 대상 |
-| 패키지 골격 10개, 빌드·린트·타입·테스트 설정 | Ghidra 추출 스크립트, MCP 도구, 랭킹, 검색 채널 |
-| 워크트리 소유권 지도, 변경 기록 4건 | 테스트 0건 (`pytest`가 수집하는 항목 없음) |
+| 기반 스키마 8테이블 + 트리거 5개로 강제되는 append-only | L2 MCP 도구, L3 랭킹, L4 분석 루프·에뮬레이션 |
+| `repo.py` — DB 접근 단일 통로, run 계측, 비밀정보 마스킹 | 검색 채널(BM25·임베딩·구조 지문), RRF 융합 |
+| 정규화 + `code_hash` (결정론 테스트로 고정) | 평가 하네스, 정답셋, 어블레이션 |
+| JSONL → DB 적재 + 산출물 정합성 검사 | 프롬프트 조립·인젝션 격리 (격리할 프롬프트 자체가 없다) |
+| CLI `extract` / `load` / `query` | `analyze` / `eval` (명시적으로 exit 2 로 거부) |
+| 테스트 27건 (ruff·mypy strict 통과) | — |
 
-`__init__.py` 10개에 들어 있는 것은 docstring 한 줄씩이고, 함수·클래스는 하나도 없다.
-빈 스텁을 만들지 않은 것은 의도적이다 — 빈 파일은 "이미 있다"는 거짓 신호를 준다.
+**Ghidra 의존 코드는 한 줄도 실행되지 않았다.** `scripts/export_functions.py` 와
+`runner.py` 의 `analyzeHeadless` 호출은 작성됐지만 Ghidra 미설치로 미검증이다.
+`load`/`query` 는 합성 산출물로 end-to-end 실증했다.
 
 ---
 
@@ -34,6 +36,9 @@
 | `6a7c93f` | 개발 하네스 구성 (에이전트 4 + 스킬 5) | 13 files, +1572 |
 | `cdf91dc` | 작업 스킬 3종 프론트매터 수정 | 4 files |
 | `0b405af` | 프로젝트 레이아웃 스캐폴딩 + 워크트리 지도 | 29 files, +728 |
+| `1afcb11` | 누적 작업 명세 `WORKLOG.md` | 1 file |
+| `4acb7c5` | 학습 가이드 `LEARNING.md` | 2 files |
+| (이번) | **L1 추출 파이프라인 + 기반 스키마** (§7 1주차) | 11 files |
 
 `master`는 `ddd9e26`에 그대로 있다. Git-Flow에 따라 `master`는 릴리스 병합만 받으며,
 첫 릴리스는 §7 1주차 완료 기준("SQL로 직접 질의 가능") 충족 시점이다.
@@ -222,11 +227,13 @@ artifacts/, .ghidra-projects/   런타임 생성. gitignore 대상
 ### 통과
 
 ```
-uv sync                     13 패키지 설치
 uv run ruff check .         All checks passed!
-uv run mypy                 Success: no issues found in 10 source files
-uv run pytest               collected 0 items  (테스트 없음 — 정상)
-uv run python -c "import …" 10개 패키지 임포트 OK
+uv run mypy                 Success: no issues found in 16 source files (strict)
+uv run pytest               27 passed
+loregrind load <dir>        함수 2개 / 콜 간선 1개 / 디컴파일 실패 1개 적재
+loregrind query "SELECT …"  콜 그래프 조인 조회 성공 (§7 1주차 완료 기준)
+loregrind query "DELETE …"  exit 1 로 거부
+loregrind analyze           exit 2 로 미구현 명시
 ```
 
 ### 미검증 (추측으로 채우지 않는다)
@@ -236,35 +243,61 @@ uv run python -c "import …" 10개 패키지 임포트 OK
 | `ghidra-extract`의 `analyzeHeadless` 명령 완주 | **Ghidra 미설치.** `-scriptPath`를 고쳤지만 실행은 확인하지 않았다. 스킬 자체가 "최초 1회 `-help`로 실측 후 갱신하라"를 요구한다 |
 | 워크트리 병렬 시나리오 | 소유권 지도는 설계다. 두 워크트리를 동시에 돌려 충돌이 없는지는 확인하지 않았다 |
 | 시스템 python 직접 실행 | 시스템은 3.10, uv가 3.12를 받아 썼다. `python3`로 직접 돌리면 실패한다 |
-| 사양의 실현 가능성 | 코드 0행 시점의 문서다 |
+| **`scripts/export_functions.py` 전체** | **Ghidra 미설치. 한 줄도 실행되지 않았다.** Ghidra API 시그니처가 11.x 에서 맞는지 확인되지 않았다 |
+| `runner.py` 의 `analyzeHeadless` 호출 | 같은 이유. 명령 조립은 `/ghidra-extract` 정규 형태를 따랐지만 완주 미확인 |
+| 실제 바이너리에서의 정규화 품질 | 합성 코드 2개로만 확인했다. `CONCAT44`, `SUB84` 등이 섞이면 규칙이 과하거나 부족할 수 있다 |
+| 대형 바이너리 성능 | 함수 2개로 확인했다. `insert_functions` 가 전체 리스트를 메모리에 만든다 |
 
 ---
 
-## 6. 다음 작업 — §7 1주차
+## 6. L1 구현 상세 (§7 1주차 — 완료)
 
-완료 기준은 **"SQL로 직접 질의 가능"**이다. 순서와 각 파일이 지켜야 할 것:
+설계 근거와 기각한 대안은 `docs/changes/2026-08-17-l1-extract.md` 에 있다. 여기서는
+**어느 파일이 무엇을 강제하는가**만 정리한다.
 
-1. **`db/schema.sql`** — `binaries`, `functions`, `runs`, `function_analyses`, `hypotheses`,
-   `entries`, `occurrences`. `function_analyses`에 `superseded_by`와 **`run_id` NOT NULL**을
-   스키마 단계에서 못박는다. 여기서 옵셔널로 두면 이후 계층이 우회하고 어블레이션이 무너진다(§6).
-2. **`db/models.py`** — 행 dataclass. `source` 컬럼은 `agent` | `emulation` | `human`.
-3. **`db/repo.py`** — 모든 DB 접근의 유일한 통로. **조회 메서드 안에 `superseded_by IS NULL`
-   필터를 넣는다** — 호출부에 흩어 놓으면 반드시 빠뜨리는 곳이 생긴다.
-4. **`scripts/export_functions.py`** — Ghidra 인터프리터용. `artifacts/extract/<sha256>/`에
-   `functions.jsonl` + `meta.json`. 디컴파일 실패는 레코드를 빼지 않고
-   `decompiled: null` + `decompile_error`로 기록한다.
-5. **`extract/`** — JSONL을 읽어 적재. 정규화(주소·레지스터·스택 오프셋 제거) 후 `code_hash`.
-6. **`cli.py`** — `loregrind extract` 먼저.
+| 파일 | 무엇을 하는가 | 무엇을 강제하는가 |
+|---|---|---|
+| `db/schema.sql` | 8테이블 + 2뷰 + 5트리거 + 6인덱스 | append-only 를 **DB 트리거로** 거부. `run_id NOT NULL` FK |
+| `db/models.py` | 행 dataclass 8개 (frozen, slots) | `source` 는 `agent`\|`emulation`\|`human` 뿐 |
+| `db/repo.py` | DB 접근 단일 통로 | 조회는 뷰 경유(`superseded_by IS NULL`), `create_run` 이 config 마스킹 |
+| `extract/normalize.py` | 정규화 10규칙 + `code_hash` | 결정론. `NORMALIZE_VERSION` 이 해시에 포함 |
+| `extract/runner.py` | `analyzeHeadless` 정규 명령 | **종료 코드 0 을 믿지 않는다** — 로그 grep |
+| `extract/loader.py` | JSONL → DB | `meta.json` 과 실제 레코드 수 대조. 어긋나면 적재 거부 |
+| `scripts/export_functions.py` | Ghidra 측 추출 | 실패 레코드를 빼지 않는다. Jython/Py3 양립 |
+| `cli.py` | `extract`/`load`/`query` | 미구현 서브커맨드는 exit 2 |
 
-스키마 작업은 `/db-change`, 추출은 `/ghidra-extract`를 통해서 한다. 두 스킬이 이제 실제
-경로를 가리키므로 바로 적용 가능하다.
+### 트리거로 강제되는 것 (문서가 아니라 DB 가 거부한다)
+
+| 트리거 | 거부하는 것 |
+|---|---|
+| `trg_function_analyses_append_only` | 판단 필드 UPDATE |
+| `trg_function_analyses_supersede_once` | 이미 가려진 행을 다시 가리기 |
+| `trg_function_analyses_no_delete` | 판단 DELETE |
+| `trg_hypotheses_append_only` | 상태 전이를 UPDATE 로 하기 |
+| `trg_hypotheses_no_delete` | 가설 DELETE |
+
+허용되는 UPDATE 는 `superseded_by` 링크 부착 하나뿐이다. 테스트는 `repo` 를 **우회해서**
+직접 UPDATE/DELETE 를 시도하고 거부되는지 확인한다.
+
+---
+
+## 7. 다음 작업
+
+### 먼저 — Ghidra 실측 1회 (다음 작업 전체의 전제)
+
+`analyzeHeadless -help` 로 플래그를 확인하고 작은 샘플로 완주시킨 뒤 `runner.py` 의
+힙·`-max-cpu` 와 `export_functions.py` 의 API 호출을 실측값으로 고친다.
+**그전까지 이 두 파일은 "확정"이 아니다.**
+
+### 그 다음 — §7 2주차 L2
+
+MCP 도구 층 + 읽기 전용 에이전트 + 평가 하네스 뼈대. 완료 기준은 "함수 1개를 제대로 요약".
+이 단계에서 **프롬프트 인젝션 격리를 실제로 구현**해야 한다 — 1주차에는 격리할 프롬프트
+조립 코드 자체가 없어서 유보 상태다.
 
 ### 그 밖의 미해결
 
-- **`.env.example` 없음** — `.gitignore`가 `!.env.example`로 예외 처리했는데 파일이 없다.
-  워크트리마다 `.env`를 복사해야 하는 구조라 템플릿이 필요하다
+- **`.env.example` 없음** — `.gitignore`가 `!.env.example`로 예외 처리했는데 파일이 없다
 - **`docs/ablation.md` 없음** — `/add-retrieval-channel` 5단계가 이 표를 요구한다
-- **Best-README-Template 잔여물** — `README.md`, `BLANK_README.md`, `CHANGELOG.md`, `images/`.
-  Loregrind와 무관하다
-- **테스트 0건** — 결정론적 코드(랭킹·정규화·해시·RRF·예산)는 단위 테스트가 필수다.
-  이 코드가 틀리면 평가 숫자 전체가 무의미해지는데 틀렸다는 신호가 눈에 보이지 않는다
+- **Best-README-Template 잔여물** — `README.md`, `BLANK_README.md`, `CHANGELOG.md`, `images/`
+- `insert_functions` 를 배치 스트리밍으로 바꿀지 검토 (대형 바이너리)
