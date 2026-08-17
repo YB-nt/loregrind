@@ -24,10 +24,13 @@ corpus/
 *.gpr
 *.rep/
 ghidra_projects/
+.ghidra-projects/
 ghidra_logs/
 *.gzf
 
 # --- 분석 산출물 ------------------------------------------------------------
+# artifacts/ 는 추출 산출물(JSONL·로그)의 출력 루트다. 코드가 런타임에 만든다.
+artifacts/
 *.db
 *.sqlite
 *.sqlite3
