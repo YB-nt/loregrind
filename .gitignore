@@ -1,0 +1,60 @@
+# --- 안전 규칙 (docs/PROJECT.md §10) ---------------------------------------
+# 평문 PE / 샘플 바이너리를 절대 커밋하지 않는다.
+# 이것은 1차 방어일 뿐이다 — 커밋 전 git status로 눈으로 확인한다.
+samples/
+corpus/
+*.exe
+*.dll
+*.sys
+*.scr
+*.ocx
+*.bin
+*.dmp
+# 암호화 아카이브만 예외적으로 허용
+!samples/**/*.7z
+!samples/**/*.gpg
+!samples/**/*.age
+
+# API 키
+.env
+.env.*
+!.env.example
+
+# --- Ghidra -----------------------------------------------------------------
+*.gpr
+*.rep/
+ghidra_projects/
+ghidra_logs/
+*.gzf
+
+# --- 분석 산출물 ------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+extracted/
+_workspace/
+reports/out/
+
+# --- Python / uv ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.uv/
+
+# --- 도구 캐시 --------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- 에디터 / OS ------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
