@@ -7,7 +7,11 @@ requires-python = ">=3.12"
 # 첫 uv sync 만 느려지고 공급망 표면은 계속 남는다.
 #   mcp — L2 도구 서버(§7 2주차). tools/server.py 만 임포트하며 tools/api.py 는
 #         SDK 없이 동작한다 (SDK 버전 변경이 도구 계약을 흔들지 않게)
+#   anthropic — 읽기 전용 에이전트(§7 2주차). analyze/llm.py 의 AnthropicClient 만
+#         임포트한다. 루프(agent.py)는 LLMClient 프로토콜에만 의존하므로 SDK 없이
+#         테스트된다 — API 키 없이 도는 테스트가 계약을 고정한다
 dependencies = [
+    "anthropic>=0.122.0",
     "mcp>=2.0.0",
 ]
 

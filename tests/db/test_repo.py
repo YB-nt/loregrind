@@ -195,6 +195,17 @@ def test_create_run_redacts_secrets(repo: Repo) -> None:
     assert "<redacted>" in stored
 
 
+def test_redact_does_not_eat_numeric_budgets() -> None:
+    """`token` 은 비밀정보만큼이나 자주 토큰 **수**를 뜻한다.
+
+    `max_tokens_per_function` 이 `<redacted>` 로 바뀌면 그 축으로 어블레이션을
+    할 수 없다. 비밀정보는 문자열, 예산은 숫자 — 타입으로 가른다.
+    """
+    out = redact_config({"max_tokens_per_function": 40_000, "api_key": "sk-x"})
+    assert out["max_tokens_per_function"] == 40_000
+    assert out["api_key"] == "<redacted>"
+
+
 def test_redact_config_is_recursive() -> None:
     out = redact_config({"a": 1, "api_key": "x", "deep": {"secret_token": "y", "ok": 2}})
     assert out == {"a": 1, "api_key": "<redacted>", "deep": {"secret_token": "<redacted>", "ok": 2}}

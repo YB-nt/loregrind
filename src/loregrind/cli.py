@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from loregrind.analyze.llm import DEFAULT_MODEL
 from loregrind.db.repo import Repo
 from loregrind.extract.loader import ExtractLoadError, load_extract
 from loregrind.extract.runner import ARTIFACTS_ROOT, GhidraError, run_extract
@@ -153,6 +154,68 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_analyze(args: argparse.Namespace) -> int:
+    """읽기 전용 에이전트로 함수 1개를 요약한다 (§7 2주차 완료 기준).
+
+    쓰기 도구는 노출하지 않는다. 결과 기록은 루프가 하는 계측이지 에이전트가
+    부르는 도구가 아니다 — 둘의 차이는 `analyze/agent.py` 에 적혀 있다.
+    """
+    from loregrind.analyze.agent import AgentError, ReadOnlyAgent, make_config
+    from loregrind.analyze.budget import Budget
+    from loregrind.analyze.llm import AnthropicClient, MissingCredentials, UnknownModelPricing
+    from loregrind.tools.server import BinaryNotLoaded, build_context
+
+    budget = Budget(max_cost_usd_per_run=args.max_cost)
+    try:
+        client = AnthropicClient(model=args.model)
+    except (UnknownModelPricing, MissingCredentials) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ImportError:
+        print("anthropic SDK 가 없다. uv sync 로 설치하라", file=sys.stderr)
+        return 1
+
+    try:
+        ctx = build_context(
+            args.db,
+            args.binary,
+            budget=budget,
+            model=args.model,
+            # run 이 어블레이션 축(effort·prompt_version·전략)을 들고 있어야 한다 (불변식 5)
+            extra_config=make_config(args.model, args.effort, budget, allow_writes=False),
+        )
+    except BinaryNotLoaded as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    agent = ReadOnlyAgent(ctx=ctx, client=client, budget=budget, effort=args.effort)
+    try:
+        result = agent.summarize(args.addr)
+    except (AgentError, MissingCredentials) as exc:
+        print(f"분석 실패: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        ctx.repo.close()
+
+    print(f"run_id={result.run_id}  model={args.model}  effort={args.effort}")
+    print(f"{result.addr}: {result.proposed_name} (confidence={result.confidence})")
+    print(f"  {result.summary}")
+    for item in result.evidence:
+        mark = "OK " if item.verified else "미확인"
+        print(f"  [{mark}] {item.kind}: {item.ref}")
+    print(
+        f"  토큰 in={result.usage.input_tokens} out={result.usage.output_tokens} "
+        f"비용=${result.cost_usd:.4f} 턴={result.turns} 도구호출={result.tool_calls}"
+    )
+    if result.unverified_evidence:
+        # 지우지 않고 세운다. 이것이 §6 환각률의 원재료다
+        print(f"  주의: 존재하지 않는 근거 {len(result.unverified_evidence)}건", file=sys.stderr)
+    if result.aborted:
+        print(f"  중단: {result.aborted}", file=sys.stderr)
+        return 3
+    return 0
+
+
 def _cmd_not_implemented(args: argparse.Namespace) -> int:
     print(
         f"{args.command} 는 아직 구현되지 않았다 (§7 {args.milestone}). "
@@ -206,8 +269,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_serve.set_defaults(func=_cmd_serve)
 
-    p_analyze = sub.add_parser("analyze", help="(미구현) 분석 루프")
-    p_analyze.set_defaults(func=_cmd_not_implemented, milestone="3~4주차")
+    p_analyze = sub.add_parser("analyze", help="읽기 전용 에이전트로 함수 1개 요약")
+    p_analyze.add_argument("--binary", required=True, help="대상 바이너리의 sha256")
+    p_analyze.add_argument("--addr", required=True, help='함수 주소 (예: "0x401000")')
+    p_analyze.add_argument("--model", default=DEFAULT_MODEL, help="runs.model 에 기록된다")
+    p_analyze.add_argument(
+        "--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"]
+    )
+    p_analyze.add_argument(
+        "--max-cost", type=float, default=5.0, help="run 당 비용 상한 (USD). 코드가 막는다"
+    )
+    p_analyze.set_defaults(func=_cmd_analyze)
 
     p_eval = sub.add_parser("eval", help="어블레이션·지표 조회 (전체는 python -m eval.run)")
     p_eval.add_argument(

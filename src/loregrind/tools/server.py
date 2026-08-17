@@ -35,6 +35,7 @@ def build_context(
     allow_writes: bool = False,
     budget: Budget | None = None,
     model: str = "unset",
+    extra_config: dict[str, Any] | None = None,
 ) -> ToolContext:
     """DB 를 열고 대상 바이너리를 고정한다.
 
@@ -47,17 +48,17 @@ def build_context(
         raise BinaryNotLoaded(f"sha256 {sha256[:12]}… 가 DB 에 없다. 먼저 loregrind load 를 하라")
 
     effective = budget or Budget()
-    run = repo.create_run(
-        model=model,
-        prompt_version=PROMPT_VERSION,
-        config={
-            "layer": "l2-readonly",
-            "sha256": sha256,
-            # 어블레이션 1축이 이 키로 GROUP BY 된다
-            "rename_writes": allow_writes,
-            **effective.as_config(),
-        },
-    )
+    config: dict[str, Any] = {
+        "layer": "l2-readonly",
+        "sha256": sha256,
+        # 어블레이션 1축이 이 키로 GROUP BY 된다
+        "rename_writes": allow_writes,
+        **effective.as_config(),
+    }
+    # 호출자가 계층·전략을 덮어쓸 수 있게 한다. 같은 run 에 서로 다른 config 가
+    # 두 벌 생기면 어블레이션이 어느 쪽으로 GROUP BY 되는지 알 수 없다
+    config.update(extra_config or {})
+    run = repo.create_run(model=model, prompt_version=PROMPT_VERSION, config=config)
     return ToolContext(
         repo=repo,
         binary_id=binary.id,

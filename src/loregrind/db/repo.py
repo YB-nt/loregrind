@@ -157,6 +157,10 @@ class Repo:
         row = self._conn.execute("SELECT * FROM binaries WHERE sha256 = ?", (sha256,)).fetchone()
         return _binary_from_row(row) if row is not None else None
 
+    def get_binary(self, binary_id: int) -> Binary | None:
+        row = self._conn.execute("SELECT * FROM binaries WHERE id = ?", (binary_id,)).fetchone()
+        return _binary_from_row(row) if row is not None else None
+
     def insert_functions(self, funcs: Iterable[Function]) -> int:
         """함수를 일괄 적재한다. 반환값은 삽입된 행 수."""
         rows = [
@@ -423,6 +427,11 @@ class Repo:
                 (tokens_in, tokens_out, cost_usd, run_id),
             )
 
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """run 의 계측값. 비용 지표가 실제로 기록됐는지 확인하는 경로."""
+        row = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        return dict(row) if row is not None else None
+
     # -- 판단 (append-only) ---------------------------------------------------
 
     def insert_analysis(self, a: FunctionAnalysis) -> int:
@@ -598,14 +607,19 @@ def redact_config(config: dict[str, Any]) -> dict[str, Any]:
 
     키 이름 기반이라 완벽하지 않다. 그래서 이것에 의존하지 않고 **애초에 설정 객체에
     API 키를 담지 않는 것**이 1차 방어다. 이 함수는 2차 방어다.
+
+    **문자열 값만 가린다.** 이 프로젝트에서 `token` 은 비밀정보만큼이나 자주
+    토큰 수를 뜻한다 — `max_tokens_per_function` 같은 예산 상한이 `<redacted>` 로
+    바뀌면 그 축으로 어블레이션을 할 수 없게 된다. 비밀정보는 문자열이고 예산은
+    숫자이므로, 타입으로 가른다.
     """
     secret_markers = ("key", "token", "secret", "password", "credential")
     out: dict[str, Any] = {}
     for k, v in config.items():
-        if any(m in k.lower() for m in secret_markers):
-            out[k] = "<redacted>"
-        elif isinstance(v, dict):
+        if isinstance(v, dict):
             out[k] = redact_config(v)
+        elif isinstance(v, str) and any(m in k.lower() for m in secret_markers):
+            out[k] = "<redacted>"
         else:
             out[k] = v
     return out

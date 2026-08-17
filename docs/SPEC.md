@@ -23,7 +23,7 @@
 | L1 사실 확장 | **동작** — strings / imports / api_calls (마이그레이션 `0002`) | Ghidra 측은 미검증 |
 | L2 도구 | **동작** — 읽기 7종, MCP stdio 서버, 예산 게이트 | `tools/`, `analyze/budget.py` |
 | 인젝션 격리 | **동작** — `wrap_untrusted`, 코퍼스 테스트 | `analyze/context.py` |
-| 읽기 전용 에이전트 | **없음** — LLM을 호출하는 코드가 아직 없다 | §14 미결정 1번 |
+| 읽기 전용 에이전트 | **동작(코드)** — 도구 루프·예산·근거 검증·run 계측. **실제 API 호출은 미검증** (키 없음) | `analyze/agent.py`, `analyze/llm.py` |
 | L3 랭킹 | **없음** | `rank/__init__.py` 한 줄 |
 | L4 루프·에뮬레이션 | **없음** | `analyze/`, `emulate/` |
 | 검색 채널 | **없음** | `retrieval/` |
@@ -437,7 +437,7 @@ class Channel(Protocol):
 |---|---|---|
 | 1 ✅ | `loregrind query "SELECT … JOIN call_edges …"` | 행 반환 (달성) |
 | 2a ✅ | `loregrind serve` 가 뜨고 도구 7종이 등록된다 | 도구 응답 계약 테스트 통과, 인젝션 코퍼스 테스트 통과, `runs` 행 생성 (달성) |
-| 2b | 읽기 전용 에이전트가 함수 1개를 요약 | 근거 인용된 요약 1건, `runs`에 **토큰·비용 실측값** 기록. **미달성 — LLM 호출 코드 없음** |
+| 2b ◐ | 읽기 전용 에이전트가 함수 1개를 요약 | 근거 인용된 요약 1건, `runs`에 토큰·비용 기록. **코드 완료·숫자 미달** — API 키가 있어야 실측된다 |
 | 3 | `make ablation METRIC=naming_accuracy AXIS=rename_writes` | 두 조건(on/off)의 행이 각각 `n>0`으로 나옴 |
 | 4 | 대형 바이너리 1개 완주 | 예산 게이트 안에서 종료, 부분 결과 커밋 확인 |
 | 5 | `make report` | **코어 지표 표 6종 + 홀드아웃 병기.** 미달 시 6주차 이후를 잘라낸다 |
@@ -467,9 +467,11 @@ class Channel(Protocol):
 
 ## 14. 미결정 (이 문서를 고쳐야 하는 지점)
 
-- **에이전트 실행 주체** — 2주차 읽기 전용 에이전트를 Anthropic API 직접 호출로
-  돌릴지, Claude Code를 MCP 클라이언트로 쓸지. 전자는 계측(토큰·비용)이 정확하고
-  후자는 개발이 빠르다. **§6 비용 지표가 필수이므로 전자로 기운다.**
+- ~~**에이전트 실행 주체**~~ — 해소됨. **Anthropic API 직접 호출**로 결정했다
+  (`analyze/llm.py`). Claude Code를 MCP 클라이언트로 쓰면 토큰·비용이 클라이언트
+  쪽에 남아 `runs`에 실을 수 없고, §6 비용 지표가 측정 불가가 된다.
+- **API 키** — 아직 없다. `AnthropicClient.create`는 한 줄도 실행되지 않았다.
+  2b의 "제대로 요약"을 숫자로 검증하려면 키 1개와 정답셋이 필요하다.
 - ~~**MCP SDK의 도구 등록 형식**~~ — 해소됨. `mcp==2.0.0`을 의존성에 추가하고
   `MCPServer` + `@server.tool()`로 7개 도구를 등록해 실제로 뜨는 것을 확인했다 (§4.1).
 - **`capa` 의존 여부** — L3 신호 중 하나일 뿐이므로 선택 의존성으로 두되, 없을 때
