@@ -15,6 +15,11 @@ Source = Literal["agent", "emulation", "human"]
 HypothesisStatus = Literal["open", "confirmed", "refuted"]
 Encoding = Literal["ascii", "utf16le", "other"]
 
+# 문자열·임포트 사실이 있으려면 `binaries.extract_schema_version` 이 이 값 이상이어야
+# 한다. **추출 절차가 아니라 행의 의미**이므로 여기(스키마 계층)에 둔다 — L2 도구가
+# 이 값을 알려고 `extract/` 를 임포트하면 계층 경계가 흐려진다 (불변식 1)
+FACTS_SCHEMA_VERSION = 2
+
 
 @dataclass(frozen=True, slots=True)
 class Binary:

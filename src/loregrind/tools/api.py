@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from loregrind.analyze.budget import BudgetExceeded, BudgetTracker
+from loregrind.db.models import FACTS_SCHEMA_VERSION
 from loregrind.db.repo import Repo
-from loregrind.extract.loader import FACTS_SCHEMA_VERSION
 from loregrind.tools.protocol import ErrorCode, check_limit, fail, ok, validate_addr
 
 MAX_LIMIT = 200

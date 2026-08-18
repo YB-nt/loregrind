@@ -41,7 +41,18 @@ INJECTION_NOTICE = (
 # 신뢰 경계 밖 텍스트의 종류. 새 종류를 추가할 때 여기에 등록하지 않으면
 # 감사가 누락을 잡을 수 없다
 UNTRUSTED_KINDS = frozenset(
-    {"decompiled", "string", "api_name", "symbol", "signature", "pdb_path", "export_name"}
+    {
+        "decompiled",
+        "string",
+        "api_name",
+        "symbol",
+        "signature",
+        "pdb_path",
+        "export_name",
+        # 도구 응답 전체. 응답 안에 decompiled·문자열·API 이름이 그대로 들어 있으므로
+        # 첫 프롬프트만 감싸고 도구 결과를 날것으로 넣으면 격리가 무의미해진다
+        "tool_result",
+    }
 )
 
 
@@ -79,6 +90,20 @@ def wrap_untrusted(kind: str, text: str, **attrs: str) -> str:
     rendered = "".join(f' {k}="{escape_attr(str(v))}"' for k, v in sorted(attrs.items()))
     body = escape_untrusted(text)
     return f'<{UNTRUSTED_TAG} kind="{kind}"{rendered}>\n{body}\n</{UNTRUSTED_TAG}>'
+
+
+def wrap_tool_result(tool_name: str, payload: str) -> str:
+    """도구 응답을 격리한다.
+
+    **첫 프롬프트만 감싸는 것으로는 부족하다.** 에이전트가 `get_function` 이나
+    `search_strings` 를 부르는 순간 디컴파일 텍스트와 문자열이 대화에 다시 들어오며,
+    그 경로가 래퍼를 거치지 않으면 격리 장치 전체가 우회된다 — 그리고 그 경로가
+    탐색의 **주** 경로다.
+
+    응답 전체를 통째로 감싼다. 안쪽 필드를 골라 감싸면 새 필드가 추가될 때마다
+    누락이 생긴다.
+    """
+    return wrap_untrusted("tool_result", payload, tool=tool_name)
 
 
 def frame_prior_as_hypothesis(family_label: str | None) -> str:

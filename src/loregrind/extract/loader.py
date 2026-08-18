@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from loregrind.db.models import (
+    FACTS_SCHEMA_VERSION,
     ApiCall,
     Binary,
     CallEdge,
@@ -37,8 +38,6 @@ from loregrind.extract.normalize import code_hash
 #   2 — + strings.jsonl / imports.jsonl (docs/SPEC.md §3)
 SUPPORTED_EXTRACT_SCHEMA_VERSIONS = frozenset({1, 2})
 CURRENT_EXTRACT_SCHEMA_VERSION = 2
-# 문자열·임포트를 요구하는 도구는 이 버전 이상을 요구한다
-FACTS_SCHEMA_VERSION = 2
 
 FUNCTIONS_FILE = "functions.jsonl"
 STRINGS_FILE = "strings.jsonl"

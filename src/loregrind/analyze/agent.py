@@ -34,6 +34,7 @@ from loregrind.analyze.context import (
     FunctionContext,
     build_function_prompt,
     build_system_prompt,
+    wrap_tool_result,
 )
 from loregrind.analyze.llm import (
     DEFAULT_MAX_TOKENS,
@@ -262,14 +263,24 @@ class ReadOnlyAgent:
     budget: Budget = field(default_factory=Budget)
     effort: str = DEFAULT_EFFORT
     max_tokens: int = DEFAULT_MAX_TOKENS
+    # **run 하나에 트래커 하나.** 함수마다 새로 만들면 `max_cost_usd_per_run` 이
+    # 매번 0 에서 시작해 run 상한이 영영 걸리지 않고, `runs` 의 비용도 마지막 함수
+    # 것만 남는다. 지금은 CLI 가 함수 1개만 돌려서 증상이 보이지 않을 뿐이다
+    tracker: BudgetTracker = field(init=False)
+    # run 전체의 토큰 누적. `runs` 계측의 소스다
+    run_usage: Usage = field(init=False, default_factory=Usage)
+
+    def __post_init__(self) -> None:
+        self.tracker = BudgetTracker(budget=self.budget)
+        self.ctx.budget = self.tracker
 
     def summarize(self, addr: str) -> AnalysisResult:
         if self.ctx.run_id is None:
             # 계측 없는 run 은 §6 에서 존재하지 않는 것과 같다
             raise AgentError("run_id 없는 컨텍스트로는 분석하지 않는다 (불변식 5)")
 
-        tracker = BudgetTracker(budget=self.budget)
-        self.ctx.budget = tracker
+        tracker = self.tracker
+        # 함수별 카운터만 초기화한다. run 누적(비용·함수 수)은 이어진다
         tracker.begin_function()
 
         fn_ctx = collect_context(self.ctx, addr)
@@ -327,7 +338,11 @@ class ReadOnlyAgent:
                         {
                             "type": "tool_result",
                             "tool_use_id": call.id,
-                            "content": json.dumps(response, ensure_ascii=False),
+                            # 도구 응답에도 격리가 필요하다 — 안에 디컴파일 텍스트와
+                            # 문자열이 그대로 들어 있다 (§10)
+                            "content": wrap_tool_result(
+                                call.name, json.dumps(response, ensure_ascii=False)
+                            ),
                             "is_error": not response["ok"],
                         }
                     )
@@ -342,16 +357,20 @@ class ReadOnlyAgent:
         evidence = verify_evidence(list(payload.get("evidence", [])), facts)
         cost = estimate_cost_usd(self.client.model, usage)
         tracker.end_function()
+        self.run_usage = self.run_usage + usage
 
         analysis_id = None
         if payload:
             analysis_id = self._record(addr, payload, evidence)
 
+        # `runs` 에는 **run 누적**을 쓴다. 이 함수 것만 쓰면 두 번째 함수가 첫 번째의
+        # 비용을 덮어써 §6 비용 지표가 마지막 함수 값이 된다.
+        # `finish_run` 이 절대값 UPDATE 이므로 함수마다 불러도 결과가 맞는다
         self.ctx.repo.finish_run(
             self.ctx.run_id,
-            tokens_in=usage.input_tokens + usage.cache_read_input_tokens,
-            tokens_out=usage.output_tokens,
-            cost_usd=cost,
+            tokens_in=self.run_usage.input_tokens + self.run_usage.cache_read_input_tokens,
+            tokens_out=self.run_usage.output_tokens,
+            cost_usd=estimate_cost_usd(self.client.model, self.run_usage),
         )
 
         return AnalysisResult(
