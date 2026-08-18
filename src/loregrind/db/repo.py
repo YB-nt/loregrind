@@ -514,6 +514,170 @@ class Repo:
             )
             return int(cur.lastrowid or 0)
 
+    # -- L3 랭킹 (마이그레이션 0003) ------------------------------------------
+
+    def record_library_verdicts(
+        self, run_id: str, verdicts: Iterable[tuple[int, bool, str, str, float]]
+    ) -> int:
+        """라이브러리 판정을 근거와 함께 남기고 `functions.is_library` 캐시를 갱신한다.
+
+        캐시 갱신은 추출 사실 테이블의 UPDATE 지만, 이 컬럼은 **판정의 파생값**이지
+        추출 사실이 아니다 (docs/SPEC.md §7). 진실은 `library_verdicts` 에 있고
+        컬럼은 언제든 재계산 가능하다.
+        """
+        rows = list(verdicts)
+        with self.tx() as cur:
+            cur.executemany(
+                "INSERT INTO library_verdicts "
+                "(run_id, function_id, is_library, method, method_version, confidence) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(run_id, fid, int(is_lib), m, v, c) for fid, is_lib, m, v, c in rows],
+            )
+            cur.executemany(
+                "UPDATE functions SET is_library = ? WHERE id = ?",
+                [(int(is_lib), fid) for fid, is_lib, _m, _v, _c in rows],
+            )
+        return len(rows)
+
+    def library_verdict_history(self, function_id: int) -> list[dict[str, Any]]:
+        """이 함수가 왜 걸러졌는가. 필터가 틀렸을 때 되짚는 경로."""
+        rows = self._conn.execute(
+            "SELECT run_id, is_library, method, method_version, confidence, created_at "
+            "FROM library_verdicts WHERE function_id = ? ORDER BY id",
+            (function_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_scores(self, run_id: str, rows: Iterable[dict[str, Any]]) -> int:
+        payload = [
+            (
+                run_id,
+                r["function_id"],
+                r["score"],
+                r["s_api"],
+                r["s_strings"],
+                r["s_callgraph"],
+                r["s_complexity"],
+                r["s_capa"],
+                r["reasons_json"],
+                r["ranker_version"],
+            )
+            for r in rows
+        ]
+        with self.tx() as cur:
+            cur.executemany(
+                "INSERT INTO function_scores (run_id, function_id, score, s_api, s_strings, "
+                "s_callgraph, s_complexity, s_capa, reasons_json, ranker_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                payload,
+            )
+        return len(payload)
+
+    def ranked_functions(
+        self, run_id: str, binary_id: int, *, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """점수 순 후보. **라이브러리로 판정된 함수는 제외한다.**
+
+        정렬은 `(score DESC, addr ASC)` 로 고정한다 — 동점을 rowid 순서에 맡기면
+        같은 run 을 두 번 조회한 결과가 달라질 수 있다 (불변식 4).
+        """
+        rows = self._conn.execute(
+            """
+            SELECT f.addr, f.original_name, s.score, s.reasons_json,
+                   s.s_api, s.s_strings, s.s_callgraph, s.s_complexity, s.s_capa
+            FROM function_scores s JOIN functions f ON f.id = s.function_id
+            WHERE s.run_id = ? AND f.binary_id = ? AND COALESCE(f.is_library, 0) = 0
+            ORDER BY s.score DESC, f.addr ASC
+            LIMIT ? OFFSET ?
+            """,
+            (run_id, binary_id, limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_scores(self, run_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM function_scores WHERE run_id = ? LIMIT 1", (run_id,)
+        ).fetchone()
+        return row is not None
+
+    def ranking_facts(self, binary_id: int) -> list[dict[str, Any]]:
+        """점수 계산에 필요한 사실을 한 번에 모은다.
+
+        함수마다 질의를 날리면 함수 수만큼 왕복이 생긴다 — 대형 바이너리에서
+        랭킹이 분석보다 오래 걸리는 상황이 실제로 나온다.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT f.id AS function_id, f.addr, f.cyclomatic,
+                   (SELECT COUNT(*) FROM call_edges e
+                     WHERE e.binary_id = f.binary_id AND e.callee_addr = f.addr) AS fan_in,
+                   (SELECT COUNT(*) FROM call_edges e
+                     WHERE e.binary_id = f.binary_id AND e.caller_addr = f.addr) AS fan_out
+            FROM functions f
+            WHERE f.binary_id = ? AND COALESCE(f.is_library, 0) = 0
+            ORDER BY f.addr
+            """,
+            (binary_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def apis_by_function(self, binary_id: int) -> dict[str, list[str]]:
+        rows = self._conn.execute(
+            "SELECT a.function_addr, i.api_name FROM api_calls a "
+            "JOIN imports i ON i.id = a.import_id WHERE a.binary_id = ? "
+            "ORDER BY a.function_addr, i.api_name",
+            (binary_id,),
+        ).fetchall()
+        out: dict[str, list[str]] = {}
+        for row in rows:
+            out.setdefault(str(row["function_addr"]), []).append(str(row["api_name"]))
+        return out
+
+    def strings_by_function(self, binary_id: int) -> dict[str, list[tuple[str, int]]]:
+        """함수 → [(문자열, 이 바이너리에서의 참조 함수 수)]. IDF 의 입력."""
+        rows = self._conn.execute(
+            """
+            SELECT x.function_addr, s.value,
+                   (SELECT COUNT(DISTINCT x2.function_addr) FROM string_xrefs x2
+                     WHERE x2.binary_id = x.binary_id AND x2.string_addr = x.string_addr) AS refs
+            FROM string_xrefs x JOIN strings s
+              ON s.binary_id = x.binary_id AND s.addr = x.string_addr
+            WHERE x.binary_id = ?
+            ORDER BY x.function_addr, s.addr
+            """,
+            (binary_id,),
+        ).fetchall()
+        out: dict[str, list[tuple[str, int]]] = {}
+        for row in rows:
+            out.setdefault(str(row["function_addr"]), []).append(
+                (str(row["value"]), int(row["refs"]))
+            )
+        return out
+
+    def cyclomatic_stats(self, binary_id: int) -> tuple[float, float]:
+        """(평균, 표준편차). 복잡도 이상치 신호의 기준선."""
+        row = self._conn.execute(
+            "SELECT AVG(cyclomatic) AS mean, COUNT(cyclomatic) AS n FROM functions "
+            "WHERE binary_id = ? AND cyclomatic IS NOT NULL",
+            (binary_id,),
+        ).fetchone()
+        mean = float(row["mean"] or 0.0)
+        n = int(row["n"] or 0)
+        if n < 2:
+            return mean, 0.0
+        var = self._conn.execute(
+            "SELECT AVG((cyclomatic - ?) * (cyclomatic - ?)) AS v FROM functions "
+            "WHERE binary_id = ? AND cyclomatic IS NOT NULL",
+            (mean, mean, binary_id),
+        ).fetchone()
+        return mean, float(var["v"] or 0.0) ** 0.5
+
+    def all_functions(self, binary_id: int) -> list[Function]:
+        rows = self._conn.execute(
+            "SELECT * FROM functions WHERE binary_id = ? ORDER BY addr", (binary_id,)
+        ).fetchall()
+        return [_function_from_row(r) for r in rows]
+
     # -- 평가 지표 (§6) -------------------------------------------------------
 
     def insert_metric(

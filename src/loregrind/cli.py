@@ -216,6 +216,61 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rank(args: argparse.Namespace) -> int:
+    """L3 랭킹 (§7 3주차). **LLM 을 부르지 않는다** (불변식 4).
+
+    라이브러리 필터 → 신호 5종 점수 → 저장. 순서가 고정되어 있다.
+    """
+    from loregrind.rank.pipeline import score_binary
+    from loregrind.rank.score import RANKER_VERSION, Weights
+
+    try:
+        weights = Weights.load(args.weights)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    repo = Repo.open(args.db)
+    try:
+        binary = repo.get_binary_by_sha256(args.binary)
+        if binary is None or binary.id is None:
+            print(f"sha256 {args.binary[:12]}… 가 DB 에 없다", file=sys.stderr)
+            return 1
+        run = repo.create_run(
+            model="none",  # 랭킹은 결정론적 코드다. 모델이 개입하지 않는다
+            prompt_version=RANKER_VERSION,
+            config={
+                "layer": "l3-rank",
+                "sha256": args.binary,
+                "strategy": "rank",
+                # 랭킹은 판단을 쓰지 않는다. 축을 비워 두면 이 run 이 어블레이션
+                # GROUP BY 에서 NULL 버킷으로 빠져 표가 조용히 갈라진다
+                "rename_writes": False,
+                "ranker_version": RANKER_VERSION,
+                **weights.as_config(),
+            },
+            seed=args.seed,
+        )
+        result = score_binary(repo, run.run_id, binary.id, weights, top_n=args.limit)
+    finally:
+        repo.close()
+
+    print(f"run_id={run.run_id}  ranker={RANKER_VERSION}")
+    print(
+        f"  라이브러리 필터: 판정 {result.filtered.judged}개 "
+        f"(라이브러리 {result.filtered.library}) / 미판정 {result.filtered.skipped}개 "
+        f"— 판정률 {result.filtered.coverage:.0%}"
+    )
+    print(f"  점수 매김: {result.scored}개")
+    for i, score in enumerate(result.top, start=1):
+        print(f"  {i:2}. {score.addr}  {score.score:.3f}  {'; '.join(score.reasons[:2])}")
+    if not result.top:
+        # 0 개는 "위험한 함수가 없다"가 아니라 사실이 부족하다는 뜻일 수 있다
+        print("  후보가 없다. 필터가 과했거나 문자열·임포트가 적재되지 않았다", file=sys.stderr)
+        return 3
+    return 0
+
+
 def _cmd_not_implemented(args: argparse.Namespace) -> int:
     print(
         f"{args.command} 는 아직 구현되지 않았다 (§7 {args.milestone}). "
@@ -268,6 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="쓰기 도구 활성화 (§7 3주차 전까지 쓰기 도구 자체가 없다)",
     )
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_rank = sub.add_parser("rank", help="L3 랭킹 — 라이브러리 필터 + 결정론 점수")
+    p_rank.add_argument("--binary", required=True, help="대상 바이너리의 sha256")
+    p_rank.add_argument("--limit", type=int, default=20, help="상위 몇 개를 출력할지")
+    p_rank.add_argument(
+        "--weights", default="config/ranking.json", help="가중치 파일 (없으면 기본값)"
+    )
+    p_rank.add_argument(
+        "--seed", type=int, default=None, help="runs.seed. random 전략의 재현에 필요하다"
+    )
+    p_rank.set_defaults(func=_cmd_rank)
 
     p_analyze = sub.add_parser("analyze", help="읽기 전용 에이전트로 함수 1개 요약")
     p_analyze.add_argument("--binary", required=True, help="대상 바이너리의 sha256")

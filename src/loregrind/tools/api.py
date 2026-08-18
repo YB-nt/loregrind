@@ -20,16 +20,21 @@
 
 from __future__ import annotations
 
+import json
+import random
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from loregrind.analyze.budget import BudgetExceeded, BudgetTracker
-from loregrind.db.models import FACTS_SCHEMA_VERSION
+from loregrind.db.models import FACTS_SCHEMA_VERSION, FunctionAnalysis, Hypothesis
 from loregrind.db.repo import Repo
 from loregrind.tools.protocol import ErrorCode, check_limit, fail, ok, validate_addr
 
 MAX_LIMIT = 200
 DEFAULT_MAX_CHARS = 20_000
+# 제안 이름은 C 식별자여야 한다. Ghidra apply(L5)에서 깨지지 않게 여기서 막는다
+_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 @dataclass(slots=True)
@@ -239,28 +244,103 @@ def get_known_analysis(ctx: ToolContext, addr: str) -> dict[str, Any]:
     )
 
 
+_STRATEGIES = frozenset({"rank", "sequential", "random"})
+
+
+def _rank_candidates(ctx: ToolContext, limit: int, cursor: str | None) -> dict[str, Any]:
+    """L3 점수 순. 점수가 없으면 **순차로 대신하지 않는다.**
+
+    없는 랭킹을 순차 순서로 흉내내면 §6 어블레이션 2축의 기준선이 오염되고,
+    그 오염은 지표 표에 드러나지 않는다.
+    """
+    if ctx.run_id is None or not ctx.repo.has_scores(ctx.run_id):
+        return fail(
+            ErrorCode.NOT_EXTRACTED,
+            "이 run 에 랭킹 점수가 없다. `loregrind rank` 를 먼저 돌려라 — "
+            "순차 순서로 대신하면 어블레이션 기준선이 오염된다",
+        )
+    offset = int(cursor) if cursor else 0
+    rows = ctx.repo.ranked_functions(ctx.run_id, ctx.binary_id, limit=limit + 1, offset=offset)
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    return ok(
+        {
+            "candidates": [
+                {
+                    "addr": row["addr"],
+                    "original_name": row["original_name"],
+                    "score": row["score"],
+                    "reasons": json.loads(row["reasons_json"]),
+                }
+                for row in page
+            ],
+            "next_cursor": str(offset + limit) if has_more else None,
+            "strategy": "rank",
+        },
+        truncated=has_more,
+    )
+
+
+def _random_candidates(ctx: ToolContext, limit: int) -> dict[str, Any]:
+    """무작위 순서 — 어블레이션의 바닥선.
+
+    **`runs.seed` 를 쓴다.** 시드 없는 무작위는 재현되지 않고, 재현되지 않는
+    바닥선과 비교한 개선폭은 숫자가 아니다.
+    """
+    if ctx.run_id is None:
+        return fail(ErrorCode.NOT_EXTRACTED, "run 없이는 무작위 순서를 재현할 수 없다")
+    run = ctx.repo.get_run(ctx.run_id)
+    seed = (run or {}).get("seed")
+    if seed is None:
+        return fail(
+            ErrorCode.NOT_EXTRACTED,
+            "runs.seed 가 없다. 시드 없는 무작위는 재현되지 않으므로 "
+            "어블레이션 바닥선으로 쓸 수 없다 (`--seed` 로 지정하라)",
+        )
+    rows = ctx.repo.list_functions(ctx.binary_id, limit=MAX_LIMIT)
+    rng = random.Random(int(seed))  # noqa: S311 - 암호용이 아니라 어블레이션 바닥선이다
+    rng.shuffle(rows)
+    return ok(
+        {
+            "candidates": [
+                {
+                    "addr": row["addr"],
+                    "original_name": row["original_name"],
+                    "score": None,
+                    "reasons": [f"random order (seed={seed})"],
+                }
+                for row in rows[:limit]
+            ],
+            "next_cursor": None,
+            "strategy": "random",
+        },
+        truncated=len(rows) > limit,
+    )
+
+
 def list_candidates(
     ctx: ToolContext, strategy: str = "sequential", limit: int = 20, cursor: str | None = None
 ) -> dict[str, Any]:
-    """무엇을 먼저 읽을지. 2주차는 `sequential` 만 지원한다.
+    """무엇을 먼저 읽을지. `rank` | `sequential` | `random` — §6 어블레이션 2축.
 
-    `strategy="rank"` 를 흉내내지 않는 이유: 없는 랭킹을 순차 순서로 대신하면
-    §6 어블레이션 2축의 기준선이 오염되고, 그 오염은 표에 드러나지 않는다.
+    **세 전략이 같은 인터페이스로 교체 가능해야** 어블레이션이 성립한다. 어느
+    하나가 다른 shape 을 돌려주면 소비측이 전략마다 갈라지고, 그 순간 비교 대상이
+    "전략"이 아니라 "전략 + 소비 코드"가 된다.
     """
     if (budget_error := _charge(ctx)) is not None:
         return budget_error
     if (problem := check_limit(limit, MAX_LIMIT)) is not None:
         return fail(ErrorCode.TOO_MANY, problem)
-    if strategy == "rank":
+    if strategy not in _STRATEGIES:
         return fail(
             ErrorCode.NOT_EXTRACTED,
-            "strategy='rank' 는 L3 랭킹(§7 3주차)이 붙어야 동작한다. "
-            "지금 순차 순서로 대신하면 어블레이션 기준선이 오염된다",
+            f"지원하지 않는 strategy: {strategy!r} (허용: {', '.join(sorted(_STRATEGIES))})",
         )
-    if strategy != "sequential":
-        return fail(
-            ErrorCode.NOT_EXTRACTED, f"지원하지 않는 strategy: {strategy!r} (지금은 'sequential')"
-        )
+
+    if strategy == "rank":
+        return _rank_candidates(ctx, limit, cursor)
+    if strategy == "random":
+        return _random_candidates(ctx, limit)
 
     rows = ctx.repo.list_functions(ctx.binary_id, after_addr=cursor, limit=limit + 1)
     has_more = len(rows) > limit
@@ -284,6 +364,162 @@ def list_candidates(
     )
 
 
+# -- 쓰기 도구 (§7 3주차) ----------------------------------------------------
+#
+# **어블레이션 1축의 조작 지점이다.** `ctx.allow_writes` 가 꺼져 있으면 전부
+# `WRITE_DISABLED` 를 반환한다. 기본값이 꺼짐인 이유: 켜짐이 기본이면 "쓰기 없음"
+# 조건을 만들 때마다 명시해야 하고 언젠가 빠뜨린다.
+
+
+def _write_guard(ctx: ToolContext) -> dict[str, Any] | None:
+    if not ctx.allow_writes:
+        return fail(
+            ErrorCode.WRITE_DISABLED,
+            "이 run 은 읽기 전용이다 (어블레이션 1축: rename_writes=false)",
+        )
+    if ctx.run_id is None:
+        return fail(ErrorCode.WRITE_DISABLED, "run 없이 판단을 남길 수 없다 (불변식 5)")
+    return None
+
+
+def record_analysis(
+    ctx: ToolContext,
+    addr: str,
+    proposed_name: str,
+    summary: str,
+    evidence: list[dict[str, Any]] | None = None,
+    confidence: float | None = None,
+) -> dict[str, Any]:
+    """판단을 남긴다. `source='agent'` 고정 — 자기 신뢰 등급을 올릴 수 없다."""
+    if (budget_error := _charge(ctx)) is not None:
+        return budget_error
+    if (denied := _write_guard(ctx)) is not None:
+        return denied
+    func, error = _resolve(ctx, addr)
+    if error is not None:
+        return error
+    if func.id is None:
+        return fail(ErrorCode.NOT_FOUND, f"{addr} 의 함수 행에 id 가 없다 (적재 결함)")
+
+    assert ctx.run_id is not None  # noqa: S101 - _write_guard 가 이미 확인했다
+    analysis_id = ctx.repo.insert_analysis(
+        FunctionAnalysis(
+            run_id=ctx.run_id,
+            function_id=func.id,
+            source="agent",
+            proposed_name=proposed_name or None,
+            summary=summary or None,
+            evidence_json=json.dumps(evidence or [], ensure_ascii=False),
+            confidence=confidence,
+            code_hash=func.code_hash,
+        )
+    )
+    return ok({"analysis_id": analysis_id, "addr": addr}, source="agent", run_id=ctx.run_id)
+
+
+def record_hypothesis(
+    ctx: ToolContext, statement: str, addr: str | None = None, experiment: str | None = None
+) -> dict[str, Any]:
+    """가설을 남긴다. **`status='open'` 으로만 생성된다.**
+
+    확정·반증은 에뮬레이션(§7 9-10주차)이 한다 — 에이전트가 자기 가설을 스스로
+    확정할 수 있으면 검증 루프가 자기 확인으로 무너진다.
+    """
+    if (budget_error := _charge(ctx)) is not None:
+        return budget_error
+    if (denied := _write_guard(ctx)) is not None:
+        return denied
+
+    function_id = None
+    if addr is not None:
+        func, error = _resolve(ctx, addr)
+        if error is not None:
+            return error
+        function_id = func.id
+
+    assert ctx.run_id is not None  # noqa: S101 - _write_guard 가 이미 확인했다
+    hypothesis_id = ctx.repo.insert_hypothesis(
+        Hypothesis(
+            run_id=ctx.run_id,
+            function_id=function_id,
+            statement=statement,
+            status="open",
+            experiment_json=json.dumps({"plan": experiment}, ensure_ascii=False)
+            if experiment
+            else None,
+        )
+    )
+    return ok({"hypothesis_id": hypothesis_id, "status": "open"}, source="agent", run_id=ctx.run_id)
+
+
+def rename_function(ctx: ToolContext, addr: str, name: str) -> dict[str, Any]:
+    """함수 이름을 제안한다. **DB 에만 쓴다** (불변식 2).
+
+    Ghidra 반영은 L5 의 단방향 배치 apply 다. 여기서 Ghidra 를 만지면 DB 가 단일
+    진실 소스가 아니게 되고, 역방향 동기화 경로가 생긴다.
+    """
+    if (budget_error := _charge(ctx)) is not None:
+        return budget_error
+    if (denied := _write_guard(ctx)) is not None:
+        return denied
+    if not _NAME_PATTERN.match(name):
+        return fail(
+            ErrorCode.INVALID_ADDR,
+            f"이름은 C 식별자여야 한다 (^[A-Za-z_][A-Za-z0-9_]{{0,127}}$). 받은 값: {name!r}",
+        )
+    func, error = _resolve(ctx, addr)
+    if error is not None:
+        return error
+    if func.id is None:
+        return fail(ErrorCode.NOT_FOUND, f"{addr} 의 함수 행에 id 가 없다 (적재 결함)")
+
+    assert ctx.run_id is not None  # noqa: S101 - _write_guard 가 이미 확인했다
+    analysis_id = ctx.repo.insert_analysis(
+        FunctionAnalysis(
+            run_id=ctx.run_id,
+            function_id=func.id,
+            source="agent",
+            proposed_name=name,
+            code_hash=func.code_hash,
+        )
+    )
+    # 리네임이 이후 컨텍스트에 전파된다 — 이것이 어블레이션 1축이 재는 효과다
+    return ok(
+        {"addr": addr, "name": name, "analysis_id": analysis_id, "applied_to_ghidra": False},
+        source="agent",
+        run_id=ctx.run_id,
+    )
+
+
+def set_comment(ctx: ToolContext, addr: str, text: str) -> dict[str, Any]:
+    """주석을 남긴다. `rename_function` 과 같이 DB 에만 쓴다."""
+    if (budget_error := _charge(ctx)) is not None:
+        return budget_error
+    if (denied := _write_guard(ctx)) is not None:
+        return denied
+    func, error = _resolve(ctx, addr)
+    if error is not None:
+        return error
+    if func.id is None:
+        return fail(ErrorCode.NOT_FOUND, f"{addr} 의 함수 행에 id 가 없다 (적재 결함)")
+
+    assert ctx.run_id is not None  # noqa: S101 - _write_guard 가 이미 확인했다
+    analysis_id = ctx.repo.insert_analysis(
+        FunctionAnalysis(
+            run_id=ctx.run_id,
+            function_id=func.id,
+            source="agent",
+            summary=text,
+            code_hash=func.code_hash,
+        )
+    )
+    return ok(
+        {"addr": addr, "analysis_id": analysis_id, "applied_to_ghidra": False},
+        source="agent",
+        run_id=ctx.run_id,
+    )
+
+
 # 읽기 전용 도구 목록. server.py 와 테스트가 같은 목록을 본다
 READ_TOOLS = (
     get_function,
@@ -293,4 +529,12 @@ READ_TOOLS = (
     search_strings,
     get_known_analysis,
     list_candidates,
+)
+
+# 쓰기 도구. `allow_writes` 가 꺼져 있으면 전부 WRITE_DISABLED 를 반환한다
+WRITE_TOOLS = (
+    record_analysis,
+    record_hypothesis,
+    rename_function,
+    set_comment,
 )

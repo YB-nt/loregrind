@@ -24,7 +24,8 @@
 | L2 도구 | **동작** — 읽기 7종, MCP stdio 서버, 예산 게이트 | `tools/`, `analyze/budget.py` |
 | 인젝션 격리 | **동작** — `wrap_untrusted`, 코퍼스 테스트 | `analyze/context.py` |
 | 읽기 전용 에이전트 | **동작(코드)** — 도구 루프·예산·근거 검증·run 계측. **실제 API 호출은 미검증** (키 없음) | `analyze/agent.py`, `analyze/llm.py` |
-| L3 랭킹 | **없음** | `rank/__init__.py` 한 줄 |
+| L3 랭킹 | **동작** — 라이브러리 필터 + 신호 4종 + 3전략. **가중치·순서 품질은 미측정** | `rank/`, 마이그레이션 `0003` |
+| L2 쓰기 도구 | **동작** — 4종, `WRITE_DISABLED` 게이트 (어블레이션 1축) | `tools/api.py` |
 | L4 루프·에뮬레이션 | **없음** | `analyze/`, `emulate/` |
 | 검색 채널 | **없음** | `retrieval/` |
 | L5 리포트 | **없음** | `report/` |
@@ -346,8 +347,9 @@ CREATE TABLE library_verdicts (
 ### 점수
 
 `rank/score.py` — 신호 5종의 가중합. **채널 융합이 아니므로 가중합이 허용된다**
-(§5의 RRF 규칙은 검색 채널에 적용된다). 가중치는 `config/ranking.yaml`에 두고
-`runs.config_json`에 그대로 실린다.
+(§5의 RRF 규칙은 검색 채널에 적용된다). 가중치는 `config/ranking.json`에 두고
+`runs.config_json`에 그대로 실린다 (YAML 대신 JSON — 의존성을 늘리지 않는다).
+**알 수 없는 키는 거부한다**: 오타난 가중치가 조용히 무시되면 어블레이션이 거짓말을 한다.
 
 | 신호 | 출처 |
 |---|---|
@@ -438,7 +440,7 @@ class Channel(Protocol):
 | 1 ✅ | `loregrind query "SELECT … JOIN call_edges …"` | 행 반환 (달성) |
 | 2a ✅ | `loregrind serve` 가 뜨고 도구 7종이 등록된다 | 도구 응답 계약 테스트 통과, 인젝션 코퍼스 테스트 통과, `runs` 행 생성 (달성) |
 | 2b ◐ | 읽기 전용 에이전트가 함수 1개를 요약 | 근거 인용된 요약 1건, `runs`에 토큰·비용 기록. **코드 완료·숫자 미달** — API 키가 있어야 실측된다 |
-| 3 | `make ablation METRIC=naming_accuracy AXIS=rename_writes` | 두 조건(on/off)의 행이 각각 `n>0`으로 나옴 |
+| 3 ◐ | `make ablation METRIC=naming_accuracy AXIS=rename_writes` | 두 조건(on/off)의 행이 각각 `n>0`으로 나옴. **기계는 동작, 숫자 미달** — 정답셋과 API 키가 있어야 채워진다 |
 | 4 | 대형 바이너리 1개 완주 | 예산 게이트 안에서 종료, 부분 결과 커밋 확인 |
 | 5 | `make report` | **코어 지표 표 6종 + 홀드아웃 병기.** 미달 시 6주차 이후를 잘라낸다 |
 | 6–7 | 캐시 히트율 곡선 | 코퍼스 크기 대비 히트율 단조 증가 |
