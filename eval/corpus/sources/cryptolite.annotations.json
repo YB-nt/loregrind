@@ -1,0 +1,52 @@
+{
+  "_why": [
+    "is_key_function / aliases / wrong_prior 는 자동으로 유도할 수 없다.",
+    "EVAL-SPEC §2: 핵심 함수를 **사후에 정하면 탐색 효율을 유리하게 조작할 수 있다.**",
+    "그래서 이 파일은 소스와 함께 커밋되며, 어떤 측정보다 먼저 존재한다.",
+    "빌드 스크립트가 이 값을 지어내지 않는다 — 여기 없는 함수는 주석 없이 들어간다."
+  ],
+  "source_project": "cryptolite",
+  "is_holdout": false,
+  "functions": {
+    "rc4_init": {
+      "aliases": ["rc4_ksa", "rc4_key_schedule", "init_rc4_state", "rc4_setup"],
+      "is_key_function": true,
+      "wrong_prior": "initialize_lookup_table"
+    },
+    "rc4_crypt": {
+      "aliases": ["rc4_prga", "rc4_encrypt", "rc4_decrypt", "rc4_stream"],
+      "is_key_function": true,
+      "wrong_prior": "swap_buffer_bytes"
+    },
+    "xor_decode": {
+      "aliases": ["xor_buffer", "single_byte_xor", "xor_encrypt", "deobfuscate_xor"],
+      "is_key_function": true,
+      "wrong_prior": "compute_parity"
+    },
+    "fnv1a_hash": {
+      "aliases": ["fnv1a", "fnv_hash", "hash_fnv1a"],
+      "is_key_function": false,
+      "wrong_prior": "crc32_checksum"
+    },
+    "djb2_hash": {
+      "aliases": ["djb2", "hash_djb2", "string_hash"],
+      "is_key_function": false,
+      "wrong_prior": "string_length"
+    },
+    "base64_encode": {
+      "aliases": ["b64_encode", "encode_base64", "to_base64"],
+      "is_key_function": true,
+      "wrong_prior": "hex_encode"
+    },
+    "checksum_buffer": {
+      "aliases": ["compute_checksum", "buffer_checksum", "rolling_checksum"],
+      "is_key_function": false,
+      "wrong_prior": "xor_decode"
+    },
+    "decode_config_blob": {
+      "aliases": ["decrypt_config", "unpack_config", "decode_configuration"],
+      "is_key_function": true,
+      "wrong_prior": "read_settings_file"
+    }
+  }
+}
